@@ -129,7 +129,7 @@ runtime.runPromise(getUsers)
 | SQLite     | `"sqlite"` | Native (3.35+)    |
 | MySQL      | `"mysql"`  | Emulated*         |
 
-\* MySQL doesn't support `RETURNING`. The adapter uses `LAST_INSERT_ID()` + SELECT as a fallback.
+\* MySQL doesn't support `RETURNING`. The adapter uses `LAST_INSERT_ID()` + SELECT as a fallback. **Tables must have an `id` column as primary key.** This is not a problem for Better Auth, which always uses `id`.
 
 ## Supported Operations
 
