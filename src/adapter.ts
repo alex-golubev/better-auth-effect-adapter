@@ -10,6 +10,17 @@ import type { EffectSqlAdapterConfig } from "./types.js"
 
 type SqlData = Record<string, Primitive | Fragment | undefined>
 
+// Extract affected rows from raw driver result
+// MySQL: { affectedRows: number }, PostgreSQL: { rowCount: number }, SQLite: { changes: number }
+const getAffectedRows = (raw: unknown): number => {
+  if (typeof raw !== "object" || raw === null) return 0
+  const result = raw as Record<string, unknown>
+  if (typeof result.affectedRows === "number") return result.affectedRows
+  if (typeof result.rowCount === "number") return result.rowCount
+  if (typeof result.changes === "number") return result.changes
+  return 0
+}
+
 const toSqlData = (data: Record<string, unknown>): SqlData => {
   const result: SqlData = {}
   for (const [key, value] of Object.entries(data)) {
@@ -249,14 +260,13 @@ export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
                 )
               }
 
-              yield* sql`
+              const raw = yield* sql`
                 UPDATE ${sql(model)}
                 SET ${sql.update(sqlData)}
                 WHERE ${whereClause}
-              `
+              `.raw
 
-              // TODO: Return actual affected row count when @effect/sql supports it
-              return 0
+              return getAffectedRows(raw)
             }),
           ),
           runtime,
@@ -313,13 +323,12 @@ export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
                 )
               }
 
-              yield* sql`
+              const raw = yield* sql`
                 DELETE FROM ${sql(model)}
                 WHERE ${whereClause}
-              `
+              `.raw
 
-              // TODO: Return actual affected row count when @effect/sql supports it
-              return 0
+              return getAffectedRows(raw)
             }),
           ),
           runtime,
