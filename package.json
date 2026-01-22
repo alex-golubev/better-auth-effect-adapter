@@ -56,8 +56,8 @@
     "type": "git",
     "url": "git+https://github.com/alex/better-auth-effect-adapter.git"
   },
-  "homepage": "https://github.com/alex/better-auth-effect-adapter#readme",
+  "homepage": "https://github.com/alex-golubev/better-auth-effect-adapter#readme",
   "bugs": {
-    "url": "https://github.com/alex/better-auth-effect-adapter/issues"
+    "url": "https://github.com/alex-golubev/better-auth-effect-adapter/issues"
   }
 }
