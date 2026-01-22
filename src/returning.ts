@@ -1,9 +1,9 @@
-import { Effect } from "effect"
-import type { SqlClient } from "@effect/sql"
-import type { SqlError } from "@effect/sql/SqlError"
-import type { Fragment, Primitive } from "@effect/sql/Statement"
-import type { Dialect, SqlData } from "./types.js"
-import { AdapterError } from "./errors.js"
+import { Effect, Option, pipe } from 'effect'
+import type { SqlClient } from '@effect/sql'
+import type { SqlError } from '@effect/sql/SqlError'
+import type { Fragment } from '@effect/sql/Statement'
+import type { Dialect, Primitive, SqlData } from './types.js'
+import { AdapterError } from './errors.js'
 
 export interface ReturningStrategy {
   readonly insertReturning: <T extends Record<string, unknown>>(
@@ -21,46 +21,30 @@ export interface ReturningStrategy {
 }
 
 /**
- * `pgStrategy` is a PostgreSQL-specific implementation of a returning strategy,
- * designed to handle database interactions that involve operations requiring the
- * `RETURNING` clause. It provides methods to execute `INSERT` and `UPDATE`
- * statements, returning affected rows as part of the result.
- *
- * This variable is intended to be used in conjunction with a PostgreSQL client
- * and enables more convenient and reliable handling of `RETURNING` queries.
- *
- * Properties:
- * - `insertReturning`: A function to perform an `INSERT` operation into a
- *   specified table, returning the inserted row.
- * - `updateReturning`: A function to perform an `UPDATE` operation on a
- *   specified table with a condition, returning the updated row or `null` if
- *   no rows were updated.
- *
- * Usage Notes:
- * - Both methods use parameterized SQL queries to ensure safety against SQL injection.
- * - The queries rely on the `RETURNING *` clause, which requires that the
- *   database supports this syntax.
+ * Requires a row to exist or dies with an AdapterError.
+ * Eliminates repetitive null checks throughout the strategies.
+ */
+const requireRow = <T>(row: T | undefined, errorMessage: string): Effect.Effect<T, never, never> =>
+  pipe(
+    row,
+    Option.fromNullable,
+    Option.match({
+      onNone: () => Effect.die(new AdapterError({ message: errorMessage })),
+      onSome: Effect.succeed,
+    }),
+  )
+
+/**
+ * PostgreSQL returning strategy using native RETURNING clause.
  */
 const pgStrategy: ReturningStrategy = {
-  insertReturning: <T extends Record<string, unknown>>(
-    sql: SqlClient.SqlClient,
-    tableName: string,
-    data: SqlData,
-  ) =>
+  insertReturning: <T extends Record<string, unknown>>(sql: SqlClient.SqlClient, tableName: string, data: SqlData) =>
     Effect.gen(function* () {
       const result = yield* sql<T>`
         INSERT INTO ${sql(tableName)} ${sql.insert(data)}
         RETURNING *
       `
-      const row = result[0]
-      if (!row) {
-        return yield* Effect.die(
-          new AdapterError({
-            message: `INSERT into "${tableName}" returned no rows`,
-          }),
-        )
-      }
-      return row
+      return yield* requireRow(result[0], `INSERT into "${tableName}" returned no rows`)
     }),
 
   updateReturning: <T extends Record<string, unknown>>(
@@ -81,72 +65,53 @@ const pgStrategy: ReturningStrategy = {
 }
 
 /**
- * Represents the SQLite returning strategy for database queries.
- * This strategy determines how the returning fields are handled
- * after executing an operation like INSERT or UPDATE in an SQLite
- * database. It is aligned to behave similarly to the PostgreSQL
- * returning strategy for consistency.
- *
- * @type {ReturningStrategy}
+ * SQLite returning strategy (same as PostgreSQL, uses native RETURNING).
  */
 const sqliteStrategy: ReturningStrategy = pgStrategy
 
 /**
- * Provides strategies for insert and update operations in a MySQL database,
- * ensuring the ability to return the affected rows.
- *
- * **Important:** MySQL does not support the `RETURNING` clause. This strategy
- * requires tables to have an `id` column as the primary key. It uses either
- * the provided `id` value or `LAST_INSERT_ID()` to fetch the inserted/updated row.
- *
- * @type {ReturningStrategy}
- *
- * @property {function} insertReturning - A function to perform an `INSERT` operation into a MySQL table
- *   and return the inserted row. Uses a transaction to ensure consistency and supports returning rows based
- *   on either the provided `id` field in the data or the `LAST_INSERT_ID`.
- *
- * @property {function} updateReturning - A function to perform an `UPDATE` operation on a MySQL table
- *   and return the updated row. Locks the row beforehand to avoid race conditions and ensures the operation
- *   only proceeds if the row exists.
+ * Fetches a row by id and requires it to exist.
+ * Used by MySQL strategy which doesn't support RETURNING.
+ */
+const fetchRowById = <T extends Record<string, unknown>>(
+  sql: SqlClient.SqlClient,
+  tableName: string,
+  id: Primitive,
+  errorContext: string,
+): Effect.Effect<T, SqlError, never> =>
+  Effect.gen(function* () {
+    const result = yield* sql<T>`
+      SELECT * FROM ${sql(tableName)} WHERE ${sql('id')} = ${id}
+    `
+    return yield* requireRow(result[0], `INSERT into "${tableName}" returned no rows (${errorContext})`)
+  })
+
+/**
+ * MySQL returning strategy using LAST_INSERT_ID() fallback.
+ * Requires tables to have an `id` column as primary key.
  */
 const mysqlStrategy: ReturningStrategy = {
-  insertReturning: <T extends Record<string, unknown>>(
-    sql: SqlClient.SqlClient,
-    tableName: string,
-    data: SqlData,
-  ) =>
+  insertReturning: <T extends Record<string, unknown>>(sql: SqlClient.SqlClient, tableName: string, data: SqlData) =>
     sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`INSERT INTO ${sql(tableName)} ${sql.insert(data)}`
 
-        const idValue = data["id"]
-        if (idValue !== undefined) {
-          const result = yield* sql<T>`
-            SELECT * FROM ${sql(tableName)} WHERE ${sql("id")} = ${idValue}
-          `
-          const row = result[0]
-          if (!row) {
-            return yield* Effect.die(
-              new AdapterError({
-                message: `INSERT into "${tableName}" returned no rows (id: ${String(idValue)})`,
-              }),
-            )
-          }
-          return row
-        }
+        const idValue = data['id'] as Primitive | undefined
 
-        const result = yield* sql<T>`
-          SELECT * FROM ${sql(tableName)} WHERE id = LAST_INSERT_ID()
-        `
-        const row = result[0]
-        if (!row) {
-          return yield* Effect.die(
-            new AdapterError({
-              message: `INSERT into "${tableName}" returned no rows (LAST_INSERT_ID)`,
-            }),
-          )
-        }
-        return row
+        return yield* pipe(
+          idValue,
+          Option.fromNullable,
+          Option.match({
+            onNone: () =>
+              Effect.gen(function* () {
+                const result = yield* sql<T>`
+                  SELECT * FROM ${sql(tableName)} WHERE id = LAST_INSERT_ID()
+                `
+                return yield* requireRow(result[0], `INSERT into "${tableName}" returned no rows (LAST_INSERT_ID)`)
+              }),
+            onSome: (id) => fetchRowById<T>(sql, tableName, id, `id: ${String(id)}`),
+          }),
+        )
       }),
     ),
 
@@ -158,48 +123,47 @@ const mysqlStrategy: ReturningStrategy = {
   ) =>
     sql.withTransaction(
       Effect.gen(function* () {
-        // Lock the row first to prevent race conditions
         const existing = yield* sql<{ id: Primitive }>`
           SELECT id FROM ${sql(tableName)}
           WHERE ${whereClause}
           LIMIT 1
           FOR UPDATE
         `
-        if (!existing[0]) return null
 
-        const id = existing[0].id
-
-        yield* sql`
-          UPDATE ${sql(tableName)}
-          SET ${sql.update(data)}
-          WHERE ${sql("id")} = ${id}
-        `
-
-        const result = yield* sql<T>`
-          SELECT * FROM ${sql(tableName)}
-          WHERE ${sql("id")} = ${id}
-        `
-        return result[0] ?? null
+        return yield* pipe(
+          existing[0],
+          Option.fromNullable,
+          Option.match({
+            onNone: () => Effect.succeed(null as T | null),
+            onSome: ({ id }) =>
+              Effect.gen(function* () {
+                yield* sql`
+                  UPDATE ${sql(tableName)}
+                  SET ${sql.update(data)}
+                  WHERE ${sql('id')} = ${id}
+                `
+                const result = yield* sql<T>`
+                  SELECT * FROM ${sql(tableName)}
+                  WHERE ${sql('id')} = ${id}
+                `
+                return result[0] ?? null
+              }),
+          }),
+        )
       }),
     ),
 }
 
 /**
- * Determines the returning strategy based on the provided SQL dialect.
- *
- * @param {Dialect} dialect - The SQL dialect for which the returning strategy is needed.
- * @returns {ReturningStrategy} The corresponding strategy for the given dialect.
+ * Strategy lookup by dialect.
  */
-export const getReturningStrategy = (dialect: Dialect): ReturningStrategy => {
-  switch (dialect) {
-    case "pg":
-      return pgStrategy
-    case "sqlite":
-      return sqliteStrategy
-    case "mysql":
-      return mysqlStrategy
-    default: {
-      throw new Error(`Unknown dialect: ${dialect}`)
-    }
-  }
+const strategies: Record<Dialect, ReturningStrategy> = {
+  pg: pgStrategy,
+  sqlite: sqliteStrategy,
+  mysql: mysqlStrategy,
 }
+
+/**
+ * Returns the appropriate returning strategy for the given SQL dialect.
+ */
+export const getReturningStrategy = (dialect: Dialect): ReturningStrategy => strategies[dialect]

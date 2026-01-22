@@ -84,7 +84,7 @@ interface EffectSqlAdapterConfig {
   dialect: "pg" | "mysql" | "sqlite"
 
   /**
-   * Enable debug logging
+   * Enable debug logging for adapter operations.
    * @default false
    */
   debugLogs?: boolean
@@ -130,6 +130,29 @@ runtime.runPromise(getUsers)
 | MySQL      | `"mysql"`  | Emulated*         |
 
 \* MySQL doesn't support `RETURNING`. The adapter uses `LAST_INSERT_ID()` + SELECT as a fallback. **Tables must have an `id` column as primary key.** This is not a problem for Better Auth, which always uses `id`.
+
+## Column Naming (snake_case / camelCase)
+
+Better Auth uses camelCase field names (`emailVerified`, `accessToken`). If your database uses snake_case columns (`email_verified`, `access_token`), configure transformation in `PgClient.layer`:
+
+```typescript
+import { PgClient } from "@effect/sql-pg"
+
+const snakeToCamel = (str: string) =>
+  str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+
+const camelToSnake = (str: string) =>
+  str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)
+
+const SqlLive = PgClient.layer({
+  database: "myapp",
+  // Transform column names automatically
+  transformResultNames: snakeToCamel,  // DB → JS (snake_case → camelCase)
+  transformQueryNames: camelToSnake,   // JS → DB (camelCase → snake_case)
+})
+```
+
+This is configured once at the client level and applies to all queries automatically.
 
 ## Supported Operations
 

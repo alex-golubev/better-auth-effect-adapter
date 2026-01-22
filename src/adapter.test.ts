@@ -1,102 +1,98 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect } from 'vitest'
 
 // Since adapter utility functions are not exported, we'll test them via the
 // exported interface where possible, and also create unit tests for the logic
 // patterns they implement.
 
-describe("adapter utilities", () => {
-  describe("getAffectedRows logic", () => {
+describe('adapter utilities', () => {
+  describe('getAffectedRows logic', () => {
     // Testing the same logic as getAffectedRows
     const getAffectedRows = (raw: unknown): number => {
-      if (typeof raw !== "object" || raw === null) return 0
+      if (typeof raw !== 'object' || raw === null) return 0
       const result = raw as Record<string, unknown>
-      if (typeof result.affectedRows === "number") return result.affectedRows
-      if (typeof result.rowCount === "number") return result.rowCount
-      if (typeof result.changes === "number") return result.changes
+      if (typeof result.affectedRows === 'number') return result.affectedRows
+      if (typeof result.rowCount === 'number') return result.rowCount
+      if (typeof result.changes === 'number') return result.changes
       return 0
     }
 
-    it("should return 0 for null", () => {
+    it('should return 0 for null', () => {
       expect(getAffectedRows(null)).toBe(0)
     })
 
-    it("should return 0 for non-object", () => {
-      expect(getAffectedRows("string")).toBe(0)
+    it('should return 0 for non-object', () => {
+      expect(getAffectedRows('string')).toBe(0)
       expect(getAffectedRows(123)).toBe(0)
       expect(getAffectedRows(undefined)).toBe(0)
     })
 
-    it("should extract affectedRows (MySQL)", () => {
+    it('should extract affectedRows (MySQL)', () => {
       expect(getAffectedRows({ affectedRows: 5 })).toBe(5)
     })
 
-    it("should extract rowCount (PostgreSQL)", () => {
+    it('should extract rowCount (PostgreSQL)', () => {
       expect(getAffectedRows({ rowCount: 3 })).toBe(3)
     })
 
-    it("should extract changes (SQLite)", () => {
+    it('should extract changes (SQLite)', () => {
       expect(getAffectedRows({ changes: 7 })).toBe(7)
     })
 
-    it("should return 0 if no known property exists", () => {
+    it('should return 0 if no known property exists', () => {
       expect(getAffectedRows({ otherProp: 10 })).toBe(0)
     })
 
-    it("should return 0 if property is not a number", () => {
-      expect(getAffectedRows({ affectedRows: "5" })).toBe(0)
+    it('should return 0 if property is not a number', () => {
+      expect(getAffectedRows({ affectedRows: '5' })).toBe(0)
       expect(getAffectedRows({ rowCount: null })).toBe(0)
     })
 
-    it("should prioritize affectedRows over others", () => {
+    it('should prioritize affectedRows over others', () => {
       expect(getAffectedRows({ affectedRows: 1, rowCount: 2, changes: 3 })).toBe(1)
     })
   })
 
-  describe("isPlainObjectOrArray logic", () => {
-    const isPlainObjectOrArray = (
-      value: unknown,
-    ): value is Record<string, unknown> | unknown[] =>
+  describe('isPlainObjectOrArray logic', () => {
+    const isPlainObjectOrArray = (value: unknown): value is Record<string, unknown> | unknown[] =>
       value !== null &&
-      typeof value === "object" &&
+      typeof value === 'object' &&
       (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype)
 
-    it("should return true for plain object", () => {
+    it('should return true for plain object', () => {
       expect(isPlainObjectOrArray({})).toBe(true)
       expect(isPlainObjectOrArray({ a: 1 })).toBe(true)
     })
 
-    it("should return true for array", () => {
+    it('should return true for array', () => {
       expect(isPlainObjectOrArray([])).toBe(true)
       expect(isPlainObjectOrArray([1, 2, 3])).toBe(true)
     })
 
-    it("should return false for null", () => {
+    it('should return false for null', () => {
       expect(isPlainObjectOrArray(null)).toBe(false)
     })
 
-    it("should return false for primitives", () => {
-      expect(isPlainObjectOrArray("string")).toBe(false)
+    it('should return false for primitives', () => {
+      expect(isPlainObjectOrArray('string')).toBe(false)
       expect(isPlainObjectOrArray(123)).toBe(false)
       expect(isPlainObjectOrArray(true)).toBe(false)
     })
 
-    it("should return false for class instances", () => {
+    it('should return false for class instances', () => {
       class MyClass {}
       expect(isPlainObjectOrArray(new MyClass())).toBe(false)
     })
 
-    it("should return true for Object.create(Object.prototype)", () => {
+    it('should return true for Object.create(Object.prototype)', () => {
       expect(isPlainObjectOrArray(Object.create(Object.prototype))).toBe(true)
     })
   })
 
-  describe("safeJsonStringify logic", () => {
-    const safeJsonStringify = (
-      value: Record<string, unknown> | unknown[],
-    ): string => {
+  describe('safeJsonStringify logic', () => {
+    const safeJsonStringify = (value: Record<string, unknown> | unknown[]): string => {
       const seen = new WeakSet()
       return JSON.stringify(value, (_, v) => {
-        if (typeof v === "object" && v !== null) {
+        if (typeof v === 'object' && v !== null) {
           if (seen.has(v)) return undefined
           seen.add(v)
         }
@@ -104,28 +100,26 @@ describe("adapter utilities", () => {
       })
     }
 
-    it("should stringify plain object", () => {
-      expect(safeJsonStringify({ a: 1, b: "test" })).toBe('{"a":1,"b":"test"}')
+    it('should stringify plain object', () => {
+      expect(safeJsonStringify({ a: 1, b: 'test' })).toBe('{"a":1,"b":"test"}')
     })
 
-    it("should stringify array", () => {
-      expect(safeJsonStringify([1, 2, 3])).toBe("[1,2,3]")
+    it('should stringify array', () => {
+      expect(safeJsonStringify([1, 2, 3])).toBe('[1,2,3]')
     })
 
-    it("should handle nested objects", () => {
-      expect(safeJsonStringify({ outer: { inner: "value" } })).toBe(
-        '{"outer":{"inner":"value"}}',
-      )
+    it('should handle nested objects', () => {
+      expect(safeJsonStringify({ outer: { inner: 'value' } })).toBe('{"outer":{"inner":"value"}}')
     })
 
-    it("should handle circular references by omitting them", () => {
+    it('should handle circular references by omitting them', () => {
       const obj: Record<string, unknown> = { a: 1 }
       obj.self = obj
       const result = safeJsonStringify(obj)
       expect(result).toBe('{"a":1}')
     })
 
-    it("should handle deeply nested circular references", () => {
+    it('should handle deeply nested circular references', () => {
       const obj: Record<string, unknown> = {
         level1: {
           level2: {},
@@ -137,31 +131,19 @@ describe("adapter utilities", () => {
     })
   })
 
-  describe("toSqlData logic", () => {
-    type Primitive =
-      | null
-      | string
-      | number
-      | bigint
-      | boolean
-      | Date
-      | Int8Array
-      | Uint8Array
+  describe('toSqlData logic', () => {
+    type Primitive = null | string | number | bigint | boolean | Date | Int8Array | Uint8Array
     type SqlData = Record<string, Primitive | undefined>
 
-    const isPlainObjectOrArray = (
-      value: unknown,
-    ): value is Record<string, unknown> | unknown[] =>
+    const isPlainObjectOrArray = (value: unknown): value is Record<string, unknown> | unknown[] =>
       value !== null &&
-      typeof value === "object" &&
+      typeof value === 'object' &&
       (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype)
 
-    const safeJsonStringify = (
-      value: Record<string, unknown> | unknown[],
-    ): string => {
+    const safeJsonStringify = (value: Record<string, unknown> | unknown[]): string => {
       const seen = new WeakSet()
       return JSON.stringify(value, (_, v) => {
-        if (typeof v === "object" && v !== null) {
+        if (typeof v === 'object' && v !== null) {
           if (seen.has(v)) return undefined
           seen.add(v)
         }
@@ -175,10 +157,10 @@ describe("adapter utilities", () => {
         if (
           value === null ||
           value === undefined ||
-          typeof value === "string" ||
-          typeof value === "number" ||
-          typeof value === "bigint" ||
-          typeof value === "boolean" ||
+          typeof value === 'string' ||
+          typeof value === 'number' ||
+          typeof value === 'bigint' ||
+          typeof value === 'boolean' ||
           value instanceof Date ||
           value instanceof Int8Array ||
           value instanceof Uint8Array
@@ -193,68 +175,68 @@ describe("adapter utilities", () => {
       return result
     }
 
-    it("should pass through null", () => {
+    it('should pass through null', () => {
       expect(toSqlData({ field: null })).toEqual({ field: null })
     })
 
-    it("should pass through undefined", () => {
+    it('should pass through undefined', () => {
       expect(toSqlData({ field: undefined })).toEqual({ field: undefined })
     })
 
-    it("should pass through string", () => {
-      expect(toSqlData({ name: "test" })).toEqual({ name: "test" })
+    it('should pass through string', () => {
+      expect(toSqlData({ name: 'test' })).toEqual({ name: 'test' })
     })
 
-    it("should pass through number", () => {
+    it('should pass through number', () => {
       expect(toSqlData({ count: 42 })).toEqual({ count: 42 })
     })
 
-    it("should pass through bigint", () => {
+    it('should pass through bigint', () => {
       expect(toSqlData({ big: BigInt(123) })).toEqual({ big: BigInt(123) })
     })
 
-    it("should pass through boolean", () => {
+    it('should pass through boolean', () => {
       expect(toSqlData({ active: true })).toEqual({ active: true })
     })
 
-    it("should pass through Date", () => {
-      const date = new Date("2024-01-15")
+    it('should pass through Date', () => {
+      const date = new Date('2024-01-15')
       expect(toSqlData({ created: date })).toEqual({ created: date })
     })
 
-    it("should pass through Uint8Array", () => {
+    it('should pass through Uint8Array', () => {
       const bytes = new Uint8Array([1, 2, 3])
       expect(toSqlData({ data: bytes })).toEqual({ data: bytes })
     })
 
-    it("should convert plain object to JSON string", () => {
-      expect(toSqlData({ metadata: { key: "value" } })).toEqual({
+    it('should convert plain object to JSON string', () => {
+      expect(toSqlData({ metadata: { key: 'value' } })).toEqual({
         metadata: '{"key":"value"}',
       })
     })
 
-    it("should convert array to JSON string", () => {
-      expect(toSqlData({ tags: ["a", "b", "c"] })).toEqual({
+    it('should convert array to JSON string', () => {
+      expect(toSqlData({ tags: ['a', 'b', 'c'] })).toEqual({
         tags: '["a","b","c"]',
       })
     })
 
-    it("should convert other types to string", () => {
-      const symbol = Symbol("test")
+    it('should convert other types to string', () => {
+      const symbol = Symbol('test')
       expect(toSqlData({ sym: symbol })).toEqual({
         sym: String(symbol),
       })
     })
 
-    it("should handle multiple fields of different types", () => {
+    it('should handle multiple fields of different types', () => {
       const result = toSqlData({
-        name: "test",
+        name: 'test',
         age: 25,
         active: true,
-        metadata: { key: "value" },
+        metadata: { key: 'value' },
       })
       expect(result).toEqual({
-        name: "test",
+        name: 'test',
         age: 25,
         active: true,
         metadata: '{"key":"value"}',
@@ -262,7 +244,7 @@ describe("adapter utilities", () => {
     })
   })
 
-  describe("toWhereConditions logic", () => {
+  describe('toWhereConditions logic', () => {
     interface Where {
       field: string
       value: unknown
@@ -285,94 +267,214 @@ describe("adapter utilities", () => {
       where.map((w) => ({
         field: getFieldName({ model, field: w.field }),
         value: w.value,
-        operator: w.operator ?? "eq",
-        connector: w.connector ?? "AND",
+        operator: w.operator ?? 'eq',
+        connector: w.connector ?? 'AND',
       }))
 
-    const simpleGetFieldName = ({ field }: { model: string; field: string }) =>
-      field
+    const simpleGetFieldName = ({ field }: { model: string; field: string }) => field
 
-    it("should convert simple where condition", () => {
+    it('should convert simple where condition', () => {
+      const result = toWhereConditions([{ field: 'id', value: 1 }], simpleGetFieldName, 'users')
+      expect(result).toEqual([{ field: 'id', value: 1, operator: 'eq', connector: 'AND' }])
+    })
+
+    it('should use provided operator', () => {
+      const result = toWhereConditions([{ field: 'age', value: 18, operator: 'gte' }], simpleGetFieldName, 'users')
+      expect(result).toEqual([{ field: 'age', value: 18, operator: 'gte', connector: 'AND' }])
+    })
+
+    it('should use provided connector', () => {
       const result = toWhereConditions(
-        [{ field: "id", value: 1 }],
+        [{ field: 'status', value: 'active', connector: 'OR' }],
         simpleGetFieldName,
-        "users",
+        'users',
       )
-      expect(result).toEqual([
-        { field: "id", value: 1, operator: "eq", connector: "AND" },
-      ])
+      expect(result).toEqual([{ field: 'status', value: 'active', operator: 'eq', connector: 'OR' }])
     })
 
-    it("should use provided operator", () => {
-      const result = toWhereConditions(
-        [{ field: "age", value: 18, operator: "gte" }],
-        simpleGetFieldName,
-        "users",
-      )
-      expect(result).toEqual([
-        { field: "age", value: 18, operator: "gte", connector: "AND" },
-      ])
+    it('should use custom getFieldName function', () => {
+      const prefixedGetFieldName = ({ model, field }: { model: string; field: string }) => `${model}_${field}`
+
+      const result = toWhereConditions([{ field: 'id', value: 1 }], prefixedGetFieldName, 'users')
+      expect(result).toEqual([{ field: 'users_id', value: 1, operator: 'eq', connector: 'AND' }])
     })
 
-    it("should use provided connector", () => {
-      const result = toWhereConditions(
-        [{ field: "status", value: "active", connector: "OR" }],
-        simpleGetFieldName,
-        "users",
-      )
-      expect(result).toEqual([
-        { field: "status", value: "active", operator: "eq", connector: "OR" },
-      ])
-    })
-
-    it("should use custom getFieldName function", () => {
-      const prefixedGetFieldName = ({
-        model,
-        field,
-      }: {
-        model: string
-        field: string
-      }) => `${model}_${field}`
-
-      const result = toWhereConditions(
-        [{ field: "id", value: 1 }],
-        prefixedGetFieldName,
-        "users",
-      )
-      expect(result).toEqual([
-        { field: "users_id", value: 1, operator: "eq", connector: "AND" },
-      ])
-    })
-
-    it("should handle multiple conditions", () => {
+    it('should handle multiple conditions', () => {
       const result = toWhereConditions(
         [
-          { field: "status", value: "active" },
-          { field: "role", value: "admin", operator: "eq", connector: "OR" },
+          { field: 'status', value: 'active' },
+          { field: 'role', value: 'admin', operator: 'eq', connector: 'OR' },
         ],
         simpleGetFieldName,
-        "users",
+        'users',
       )
       expect(result).toHaveLength(2)
       expect(result[0]).toEqual({
-        field: "status",
-        value: "active",
-        operator: "eq",
-        connector: "AND",
+        field: 'status',
+        value: 'active',
+        operator: 'eq',
+        connector: 'AND',
       })
       expect(result[1]).toEqual({
-        field: "role",
-        value: "admin",
-        operator: "eq",
-        connector: "OR",
+        field: 'role',
+        value: 'admin',
+        operator: 'eq',
+        connector: 'OR',
       })
     })
   })
 })
 
-describe("effectSqlAdapter factory", () => {
-  it("should be importable", async () => {
-    const module = await import("./adapter.js")
-    expect(module.effectSqlAdapter).toBeTypeOf("function")
+describe('requireWhereClause logic', () => {
+  // Mimics the requireWhereClause function from adapter.ts
+  const requireWhereClause = (clause: { __fragment: string } | null, operation: string) => {
+    if (clause) return { success: true, value: clause }
+    return { success: false, error: new Error(`${operation} requires WHERE clause`) }
+  }
+
+  it('should succeed when clause is provided', () => {
+    const clause = { __fragment: 'id = 1' }
+    const result = requireWhereClause(clause, 'UPDATE')
+    expect(result.success).toBe(true)
+    expect(result.value).toBe(clause)
+  })
+
+  it('should fail for UPDATE when clause is null', () => {
+    const result = requireWhereClause(null, 'UPDATE')
+    expect(result.success).toBe(false)
+    expect(result.error?.message).toBe('UPDATE requires WHERE clause')
+  })
+
+  it('should fail for DELETE when clause is null', () => {
+    const result = requireWhereClause(null, 'DELETE')
+    expect(result.success).toBe(false)
+    expect(result.error?.message).toBe('DELETE requires WHERE clause')
+  })
+
+  it('should include operation name in error message', () => {
+    const result = requireWhereClause(null, 'CUSTOM_OP')
+    expect(result.success).toBe(false)
+    expect(result.error?.message).toContain('CUSTOM_OP')
+  })
+})
+
+describe('convertToSqlValue logic', () => {
+  type Primitive = null | string | number | bigint | boolean | Date | Int8Array | Uint8Array
+
+  const isPlainObjectOrArray = (value: unknown): value is Record<string, unknown> | unknown[] =>
+    value !== null &&
+    typeof value === 'object' &&
+    (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype)
+
+  const isPrimitive = (value: unknown): value is Primitive | undefined =>
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'bigint' ||
+    typeof value === 'boolean' ||
+    value instanceof Date ||
+    value instanceof Int8Array ||
+    value instanceof Uint8Array
+
+  const safeJsonStringify = (value: Record<string, unknown> | unknown[]): string => {
+    const seen = new WeakSet()
+    return JSON.stringify(value, (_, v) => {
+      if (typeof v === 'object' && v !== null) {
+        if (seen.has(v)) return undefined
+        seen.add(v)
+      }
+      return v
+    })
+  }
+
+  const convertToSqlValue = (value: unknown): Primitive | undefined =>
+    isPrimitive(value) ? value : isPlainObjectOrArray(value) ? safeJsonStringify(value) : String(value)
+
+  it('should pass through null', () => {
+    expect(convertToSqlValue(null)).toBe(null)
+  })
+
+  it('should pass through undefined', () => {
+    expect(convertToSqlValue(undefined)).toBe(undefined)
+  })
+
+  it('should pass through string', () => {
+    expect(convertToSqlValue('test')).toBe('test')
+  })
+
+  it('should pass through number', () => {
+    expect(convertToSqlValue(42)).toBe(42)
+    expect(convertToSqlValue(3.14)).toBe(3.14)
+    expect(convertToSqlValue(-100)).toBe(-100)
+  })
+
+  it('should pass through bigint', () => {
+    const big = BigInt(9007199254740991)
+    expect(convertToSqlValue(big)).toBe(big)
+  })
+
+  it('should pass through boolean', () => {
+    expect(convertToSqlValue(true)).toBe(true)
+    expect(convertToSqlValue(false)).toBe(false)
+  })
+
+  it('should pass through Date', () => {
+    const date = new Date('2024-01-15T10:00:00Z')
+    expect(convertToSqlValue(date)).toBe(date)
+  })
+
+  it('should pass through Uint8Array', () => {
+    const bytes = new Uint8Array([1, 2, 3])
+    expect(convertToSqlValue(bytes)).toBe(bytes)
+  })
+
+  it('should pass through Int8Array', () => {
+    const bytes = new Int8Array([1, -2, 3])
+    expect(convertToSqlValue(bytes)).toBe(bytes)
+  })
+
+  it('should convert plain object to JSON string', () => {
+    expect(convertToSqlValue({ key: 'value' })).toBe('{"key":"value"}')
+  })
+
+  it('should convert array to JSON string', () => {
+    expect(convertToSqlValue([1, 2, 3])).toBe('[1,2,3]')
+  })
+
+  it('should convert nested object to JSON string', () => {
+    expect(convertToSqlValue({ outer: { inner: 'value' } })).toBe('{"outer":{"inner":"value"}}')
+  })
+
+  it('should handle circular references in objects', () => {
+    const obj: Record<string, unknown> = { a: 1 }
+    obj.self = obj
+    expect(convertToSqlValue(obj)).toBe('{"a":1}')
+  })
+
+  it('should convert class instance to string', () => {
+    class MyClass {
+      toString() {
+        return 'MyClass instance'
+      }
+    }
+    expect(convertToSqlValue(new MyClass())).toBe('MyClass instance')
+  })
+
+  it('should convert Symbol to string', () => {
+    const sym = Symbol('test')
+    expect(convertToSqlValue(sym)).toBe('Symbol(test)')
+  })
+
+  it('should convert function to string', () => {
+    const fn = () => 'hello'
+    expect(convertToSqlValue(fn)).toContain('hello')
+  })
+})
+
+describe('effectSqlAdapter factory', () => {
+  it('should be importable', async () => {
+    const module = await import('./adapter.js')
+    expect(module.effectSqlAdapter).toBeTypeOf('function')
   })
 })
