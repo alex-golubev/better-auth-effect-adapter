@@ -1,0 +1,59 @@
+{
+  "name": "better-auth-effect",
+  "version": "0.1.0",
+  "description": "Better Auth adapter for @effect/sql",
+  "author": "Alex Golubev",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@effect/sql": ">=0.26.0",
+    "better-auth": ">=1.0.0",
+    "effect": ">=3.12.0"
+  },
+  "devDependencies": {
+    "@effect/sql": "^0.26.0",
+    "better-auth": "^1.2.0",
+    "effect": "^3.12.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "better-auth",
+    "effect",
+    "effect-ts",
+    "sql",
+    "adapter",
+    "authentication",
+    "auth"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alex/better-auth-effect-adapter.git"
+  },
+  "homepage": "https://github.com/alex/better-auth-effect-adapter#readme",
+  "bugs": {
+    "url": "https://github.com/alex/better-auth-effect-adapter/issues"
+  }
+}
