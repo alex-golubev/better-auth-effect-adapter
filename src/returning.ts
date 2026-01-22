@@ -120,8 +120,7 @@ export const getReturningStrategy = (dialect: Dialect): ReturningStrategy => {
     case "mysql":
       return mysqlStrategy
     default: {
-      const _exhaustive: never = dialect
-      throw new Error(`Unknown dialect: ${_exhaustive}`)
+      throw new Error(`Unknown dialect: ${dialect}`)
     }
   }
 }

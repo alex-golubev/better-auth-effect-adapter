@@ -91,8 +91,7 @@ const whereToFragment = (
       return sql`${column} LIKE ${"%" + String(value)}`
 
     default: {
-      const _exhaustive: never = operator
-      throw new Error(`Unknown operator: ${_exhaustive}`)
+      throw new Error(`Unknown operator: ${operator}`)
     }
   }
 }
