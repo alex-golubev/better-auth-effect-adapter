@@ -1,7 +1,14 @@
 import type { ManagedRuntime } from "effect"
 import type { SqlClient } from "@effect/sql"
+import type { Fragment, Primitive } from "@effect/sql/Statement"
 
 export type Dialect = "pg" | "mysql" | "sqlite"
+
+/**
+ * Represents a record of SQL-compatible data values.
+ * Used for INSERT and UPDATE operations.
+ */
+export type SqlData = Record<string, Primitive | Fragment | undefined>
 
 export interface EffectSqlAdapterConfig {
   /**

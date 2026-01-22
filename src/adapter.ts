@@ -6,12 +6,22 @@ import type { WhereCondition } from "./where-builder.js"
 import { buildWhereClause } from "./where-builder.js"
 import { getReturningStrategy } from "./returning.js"
 import { runAdapterEffect } from "./errors.js"
-import type { EffectSqlAdapterConfig } from "./types.js"
+import type { EffectSqlAdapterConfig, SqlData } from "./types.js"
 
-type SqlData = Record<string, Primitive | Fragment | undefined>
-
-// Extract affected rows from raw driver result
-// MySQL: { affectedRows: number }, PostgreSQL: { rowCount: number }, SQLite: { changes: number }
+/**
+ * Retrieves the number of affected rows from the input object, based on known keys.
+ *
+ * This function checks the input object for the presence of specific properties that
+ * commonly represent the count of affected rows in database operations (`affectedRows`,
+ * `rowCount`, or `changes`). If any of these properties are found and are of type `number`,
+ * their value is returned. If none of these properties are present or the input is not
+ * an object, the function returns 0.
+ *
+ * @param {unknown} raw - The input value, expected to be an object containing one of the
+ *                        known properties (`affectedRows`, `rowCount`, or `changes`) representing
+ *                        the number of affected rows.
+ * @returns {number} The number of affected rows if a valid property is found, otherwise 0.
+ */
 const getAffectedRows = (raw: unknown): number => {
   if (typeof raw !== "object" || raw === null) return 0
   const result = raw as Record<string, unknown>
@@ -21,6 +31,48 @@ const getAffectedRows = (raw: unknown): number => {
   return 0
 }
 
+/**
+ * Determines if a given value is either a plain object or an array.
+ *
+ * A plain object is considered an object directly created by the `Object` constructor
+ * or one with a prototype of `Object.prototype`. Arrays are also explicitly checked.
+ *
+ * @param value - The value to evaluate.
+ * @returns A boolean indicating whether the value is a plain object or an array.
+ */
+const isPlainObjectOrArray = (value: unknown): value is Record<string, unknown> | unknown[] =>
+  value !== null &&
+  typeof value === "object" &&
+  (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype)
+
+/**
+ * Safely serializes a value to JSON, handling circular references.
+ *
+ * Uses a WeakSet to track visited objects. If a circular reference is detected,
+ * the circular property is omitted from the output (replaced with `undefined`).
+ *
+ * @param {Record<string, unknown> | unknown[]} value - The plain object or array to serialize.
+ * @returns {string} The JSON string representation of the value.
+ */
+const safeJsonStringify = (value: Record<string, unknown> | unknown[]): string => {
+  const seen = new WeakSet()
+  return JSON.stringify(value, (_, v) => {
+    if (typeof v === "object" && v !== null) {
+      if (seen.has(v)) return undefined
+      seen.add(v)
+    }
+    return v
+  })
+}
+
+/**
+ * Converts a given data object into a format compatible with SQL data requirements.
+ * The function processes the input object and ensures that its properties are converted
+ * into primitive types, JSON strings, or string representations as needed.
+ *
+ * @param {Record<string, unknown>} data - The input object containing key-value pairs to be converted.
+ * @returns {SqlData} A new object where each property is formatted to meet SQL data compatibility.
+ */
 const toSqlData = (data: Record<string, unknown>): SqlData => {
   const result: SqlData = {}
   for (const [key, value] of Object.entries(data)) {
@@ -36,13 +88,25 @@ const toSqlData = (data: Record<string, unknown>): SqlData => {
       value instanceof Uint8Array
     ) {
       result[key] = value as Primitive | undefined
+    } else if (isPlainObjectOrArray(value)) {
+      result[key] = safeJsonStringify(value)
     } else {
-      result[key] = JSON.stringify(value)
+      result[key] = String(value)
     }
   }
   return result
 }
 
+/**
+ * Converts an array of `Where` conditions into a formatted array of `WhereCondition` objects.
+ *
+ * @param {Required<Where>[]} where - An array of required `Where` objects, where each object contains the conditions to be transformed.
+ * @param {function} getFieldName - A function that converts a field definition into its formatted field name. Accepts an object
+ * with properties `model` and `field` as arguments and returns the corresponding field name as a string.
+ * @param {string} model - The name of the model to be used in the `getFieldName` function.
+ * @returns {WhereCondition[]} An array of `WhereCondition` objects, with each condition containing the formatted field name, value,
+ * operator, and connector. Default values are applied where necessary: `operator` defaults to `"eq"`, and `connector` defaults to `"AND"`.
+ */
 const toWhereConditions = (
   where: Required<Where>[],
   getFieldName: (opts: { model: string; field: string }) => string,
@@ -55,6 +119,21 @@ const toWhereConditions = (
     connector: w.connector ?? "AND",
   }))
 
+/**
+ * Creates an SQL adapter with effect-based operations for interacting with a database.
+ *
+ * @param {EffectSqlAdapterConfig} adapterConfig - Configuration for the SQL adapter, including runtime and dialect settings.
+ *
+ * The adapter provides methods to:
+ * - Insert a record into the database with the `create` method.
+ * - Retrieve a single record matching specific conditions using the `findOne` method.
+ * - Fetch multiple records, optionally filtered by conditions, with the `findMany` method.
+ * - Update a single record using the `update` method.
+ * - Perform multiple updates using the `updateMany` method.
+ * - Delete a single record with the `delete` method.
+ * - Delete multiple records using `deleteMany`.
+ * - Count records matching specific conditions using the `count` method.
+ */
 export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
   const { runtime, dialect } = adapterConfig
   const returningStrategy = getReturningStrategy(dialect)
@@ -75,7 +154,8 @@ export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
       select: string[] | undefined,
     ): Fragment => {
       if (!select?.length) return sql.literal("*")
-      return sql.csv(select)
+      const columns = select.map((col) => sql`${sql(col)}`)
+      return sql.join(", ", false, "*")(columns)
     }
 
     const buildOrderBy = (
