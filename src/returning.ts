@@ -3,6 +3,7 @@ import type { SqlClient } from "@effect/sql"
 import type { SqlError } from "@effect/sql/SqlError"
 import type { Fragment, Primitive } from "@effect/sql/Statement"
 import type { Dialect } from "./types.js"
+import { AdapterError } from "./errors.js"
 
 type SqlData = Record<string, Primitive | Fragment | undefined>
 
@@ -34,7 +35,11 @@ const pgStrategy: ReturningStrategy = {
       `
       const row = result[0]
       if (!row) {
-        return yield* Effect.die(new Error(`Failed to insert into ${tableName}`))
+        return yield* Effect.die(
+          new AdapterError({
+            message: `INSERT into "${tableName}" returned no rows`,
+          }),
+        )
       }
       return row
     }),
@@ -64,30 +69,40 @@ const mysqlStrategy: ReturningStrategy = {
     tableName: string,
     data: SqlData,
   ) =>
-    Effect.gen(function* () {
-      yield* sql`INSERT INTO ${sql(tableName)} ${sql.insert(data)}`
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO ${sql(tableName)} ${sql.insert(data)}`
 
-      const idValue = data["id"]
-      if (idValue !== undefined) {
+        const idValue = data["id"]
+        if (idValue !== undefined) {
+          const result = yield* sql<T>`
+            SELECT * FROM ${sql(tableName)} WHERE ${sql("id")} = ${idValue}
+          `
+          const row = result[0]
+          if (!row) {
+            return yield* Effect.die(
+              new AdapterError({
+                message: `INSERT into "${tableName}" returned no rows (id: ${String(idValue)})`,
+              }),
+            )
+          }
+          return row
+        }
+
         const result = yield* sql<T>`
-          SELECT * FROM ${sql(tableName)} WHERE ${sql("id")} = ${idValue}
+          SELECT * FROM ${sql(tableName)} WHERE id = LAST_INSERT_ID()
         `
         const row = result[0]
         if (!row) {
-          return yield* Effect.die(new Error(`Failed to fetch inserted row from ${tableName}`))
+          return yield* Effect.die(
+            new AdapterError({
+              message: `INSERT into "${tableName}" returned no rows (LAST_INSERT_ID)`,
+            }),
+          )
         }
         return row
-      }
-
-      const result = yield* sql<T>`
-        SELECT * FROM ${sql(tableName)} WHERE id = LAST_INSERT_ID()
-      `
-      const row = result[0]
-      if (!row) {
-        return yield* Effect.die(new Error(`Failed to fetch inserted row from ${tableName}`))
-      }
-      return row
-    }),
+      }),
+    ),
 
   updateReturning: <T extends Record<string, unknown>>(
     sql: SqlClient.SqlClient,
@@ -95,20 +110,32 @@ const mysqlStrategy: ReturningStrategy = {
     whereClause: Fragment,
     data: SqlData,
   ) =>
-    Effect.gen(function* () {
-      yield* sql`
-        UPDATE ${sql(tableName)}
-        SET ${sql.update(data)}
-        WHERE ${whereClause}
-      `
+    sql.withTransaction(
+      Effect.gen(function* () {
+        // Lock the row first to prevent race conditions
+        const existing = yield* sql<{ id: Primitive }>`
+          SELECT id FROM ${sql(tableName)}
+          WHERE ${whereClause}
+          LIMIT 1
+          FOR UPDATE
+        `
+        if (!existing[0]) return null
 
-      const result = yield* sql<T>`
-        SELECT * FROM ${sql(tableName)}
-        WHERE ${whereClause}
-        LIMIT 1
-      `
-      return result[0] ?? null
-    }),
+        const id = existing[0].id
+
+        yield* sql`
+          UPDATE ${sql(tableName)}
+          SET ${sql.update(data)}
+          WHERE ${sql("id")} = ${id}
+        `
+
+        const result = yield* sql<T>`
+          SELECT * FROM ${sql(tableName)}
+          WHERE ${sql("id")} = ${id}
+        `
+        return result[0] ?? null
+      }),
+    ),
 }
 
 export const getReturningStrategy = (dialect: Dialect): ReturningStrategy => {

@@ -1,41 +1,22 @@
-import { Effect, ManagedRuntime } from "effect"
+import { Data, Effect, ManagedRuntime } from "effect"
 import type { SqlClient } from "@effect/sql"
 import { SqlError } from "@effect/sql/SqlError"
 
-export class AdapterError extends Error {
-  readonly _tag = "AdapterError" as const
+export class AdapterError extends Data.TaggedError("AdapterError")<{
+  readonly message: string
   readonly originalCause?: unknown
+}> {}
 
-  constructor(message: string, cause?: unknown) {
-    super(message)
-    this.name = "AdapterError"
-    this.originalCause = cause
-  }
-}
-
-export class ConstraintViolationError extends Error {
-  readonly _tag = "ConstraintViolationError" as const
-  readonly constraint: string | undefined
+export class ConstraintViolationError extends Data.TaggedError("ConstraintViolationError")<{
+  readonly message: string
+  readonly constraint?: string
   readonly originalCause?: unknown
+}> {}
 
-  constructor(message: string, constraint: string | undefined, cause?: unknown) {
-    super(message)
-    this.name = "ConstraintViolationError"
-    this.constraint = constraint
-    this.originalCause = cause
-  }
-}
-
-export class ConnectionError extends Error {
-  readonly _tag = "ConnectionError" as const
+export class ConnectionError extends Data.TaggedError("ConnectionError")<{
+  readonly message: string
   readonly originalCause?: unknown
-
-  constructor(message: string, cause?: unknown) {
-    super(message)
-    this.name = "ConnectionError"
-    this.originalCause = cause
-  }
-}
+}> {}
 
 export type BetterAuthAdapterError =
   | AdapterError
@@ -50,10 +31,10 @@ const isSqlError = (error: unknown): error is SqlError =>
 
 export const mapSqlError = (error: unknown): BetterAuthAdapterError => {
   if (!isSqlError(error)) {
-    return new AdapterError(
-      error instanceof Error ? error.message : "Unknown error",
-      error,
-    )
+    return new AdapterError({
+      message: error instanceof Error ? error.message : "Unknown error",
+      originalCause: error,
+    })
   }
 
   const message = error.message ?? "Unknown SQL error"
@@ -64,11 +45,11 @@ export const mapSqlError = (error: unknown): BetterAuthAdapterError => {
     message.includes("Duplicate entry") ||
     message.includes("violates unique constraint")
   ) {
-    return new ConstraintViolationError(
-      "Unique constraint violation",
-      undefined,
-      error,
-    )
+    return new ConstraintViolationError({
+      message,
+      constraint: "unique",
+      originalCause: error,
+    })
   }
 
   if (
@@ -76,11 +57,11 @@ export const mapSqlError = (error: unknown): BetterAuthAdapterError => {
     message.includes("foreign key constraint") ||
     message.includes("violates foreign key")
   ) {
-    return new ConstraintViolationError(
-      "Foreign key constraint violation",
-      undefined,
-      error,
-    )
+    return new ConstraintViolationError({
+      message,
+      constraint: "foreign_key",
+      originalCause: error,
+    })
   }
 
   if (
@@ -88,10 +69,13 @@ export const mapSqlError = (error: unknown): BetterAuthAdapterError => {
     message.includes("ECONNREFUSED") ||
     message.includes("timeout")
   ) {
-    return new ConnectionError("Database connection error", error)
+    return new ConnectionError({
+      message,
+      originalCause: error,
+    })
   }
 
-  return new AdapterError(message, error)
+  return new AdapterError({ message, originalCause: error })
 }
 
 export const runAdapterEffect = <A>(

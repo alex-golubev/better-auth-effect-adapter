@@ -59,6 +59,35 @@ export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
     ): Effect.Effect<A, unknown, SqlClient.SqlClient> =>
       Effect.flatMap(SqlClient.SqlClient, fn)
 
+    const buildSelectColumns = (
+      sql: SqlClient.SqlClient,
+      select: string[] | undefined,
+    ): Fragment => {
+      if (!select?.length) return sql.literal("*")
+      return sql.csv(select)
+    }
+
+    const buildOrderBy = (
+      sql: SqlClient.SqlClient,
+      sortBy: { field: string; direction: "asc" | "desc" } | undefined,
+      getFieldName: (opts: { model: string; field: string }) => string,
+      model: string,
+    ): Fragment => {
+      if (!sortBy) return sql.literal("")
+      const field = sql(getFieldName({ model, field: sortBy.field }))
+      const direction = sortBy.direction === "desc" ? sql.literal("DESC") : sql.literal("ASC")
+      return sql`ORDER BY ${field} ${direction}`
+    }
+
+    const buildLimitOffset = (
+      sql: SqlClient.SqlClient,
+      limit: number,
+      offset?: number,
+    ): Fragment =>
+      offset
+        ? sql`LIMIT ${limit} OFFSET ${offset}`
+        : sql`LIMIT ${limit}`
+
     return {
       create: async <T extends Record<string, unknown>>({
         model,
@@ -81,6 +110,7 @@ export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
       findOne: async <T>({
         model,
         where,
+        select,
       }: {
         model: string
         where: Required<Where>[]
@@ -91,16 +121,17 @@ export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
         return runAdapterEffect(
           withSql((sql) =>
             Effect.gen(function* () {
+              const columns = buildSelectColumns(sql, select)
               const whereClause = buildWhereClause(sql, conditions)
 
               const query = whereClause
                 ? sql<Record<string, unknown>>`
-                    SELECT * FROM ${sql(model)}
+                    SELECT ${columns} FROM ${sql(model)}
                     WHERE ${whereClause}
                     LIMIT 1
                   `
                 : sql<Record<string, unknown>>`
-                    SELECT * FROM ${sql(model)}
+                    SELECT ${columns} FROM ${sql(model)}
                     LIMIT 1
                   `
 
@@ -133,34 +164,20 @@ export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
           withSql((sql) =>
             Effect.gen(function* () {
               const whereClause = buildWhereClause(sql, conditions)
-
-              const sortField = sortBy
-                ? getFieldName({ model, field: sortBy.field })
-                : null
-              const orderBy = sortField
-                ? sql.literal(
-                    `ORDER BY "${sortField}" ${sortBy!.direction.toUpperCase()}`,
-                  )
-                : sql.literal("")
-
-              const limitClause = sql.literal(`LIMIT ${limit}`)
-              const offsetClause = offset
-                ? sql.literal(`OFFSET ${offset}`)
-                : sql.literal("")
+              const orderBy = buildOrderBy(sql, sortBy, getFieldName, model)
+              const limitOffset = buildLimitOffset(sql, limit, offset)
 
               const query = whereClause
                 ? sql<Record<string, unknown>>`
                     SELECT * FROM ${sql(model)}
                     WHERE ${whereClause}
                     ${orderBy}
-                    ${limitClause}
-                    ${offsetClause}
+                    ${limitOffset}
                   `
                 : sql<Record<string, unknown>>`
                     SELECT * FROM ${sql(model)}
                     ${orderBy}
-                    ${limitClause}
-                    ${offsetClause}
+                    ${limitOffset}
                   `
 
               const results = yield* query
@@ -226,18 +243,19 @@ export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
             Effect.gen(function* () {
               const whereClause = buildWhereClause(sql, conditions)
 
-              const query = whereClause
-                ? sql`
-                    UPDATE ${sql(model)}
-                    SET ${sql.update(sqlData)}
-                    WHERE ${whereClause}
-                  `
-                : sql`
-                    UPDATE ${sql(model)}
-                    SET ${sql.update(sqlData)}
-                  `
+              if (!whereClause) {
+                return yield* Effect.die(
+                  new Error("UPDATE requires WHERE clause"),
+                )
+              }
 
-              yield* query
+              yield* sql`
+                UPDATE ${sql(model)}
+                SET ${sql.update(sqlData)}
+                WHERE ${whereClause}
+              `
+
+              // TODO: Return actual affected row count when @effect/sql supports it
               return 0
             }),
           ),
@@ -289,11 +307,18 @@ export const effectSqlAdapter = (adapterConfig: EffectSqlAdapterConfig) => {
             Effect.gen(function* () {
               const whereClause = buildWhereClause(sql, conditions)
 
-              const query = whereClause
-                ? sql`DELETE FROM ${sql(model)} WHERE ${whereClause}`
-                : sql`DELETE FROM ${sql(model)}`
+              if (!whereClause) {
+                return yield* Effect.die(
+                  new Error("DELETE requires WHERE clause"),
+                )
+              }
 
-              yield* query
+              yield* sql`
+                DELETE FROM ${sql(model)}
+                WHERE ${whereClause}
+              `
+
+              // TODO: Return actual affected row count when @effect/sql supports it
               return 0
             }),
           ),

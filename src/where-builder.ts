@@ -4,7 +4,18 @@ import type { Fragment, Primitive } from "@effect/sql/Statement"
 export interface WhereCondition {
   field: string
   value: string | number | boolean | string[] | number[] | Date | null
-  operator: "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "in" | "not_in" | "contains" | "starts_with" | "ends_with"
+  operator:
+    | "eq"
+    | "ne"
+    | "lt"
+    | "lte"
+    | "gt"
+    | "gte"
+    | "in"
+    | "not_in"
+    | "contains"
+    | "starts_with"
+    | "ends_with"
   connector: "AND" | "OR"
 }
 
@@ -18,68 +29,48 @@ const isPrimitive = (value: unknown): value is Primitive =>
   value instanceof Int8Array ||
   value instanceof Uint8Array
 
+const toSqlValue = (value: unknown): Primitive =>
+  isPrimitive(value) ? value : String(value)
+
 const whereToFragment = (
   sql: SqlClient.SqlClient,
   where: WhereCondition,
 ): Fragment => {
   const column = sql(where.field)
   const value = where.value
-  const operator = where.operator
 
-  switch (operator) {
+  switch (where.operator) {
     case "eq":
-      if (value === null) {
-        return sql`${column} IS NULL`
-      }
-      if (isPrimitive(value)) {
-        return sql`${column} = ${value}`
-      }
-      return sql`${column} = ${String(value)}`
+      return value === null
+        ? sql`${column} IS NULL`
+        : sql`${column} = ${toSqlValue(value)}`
 
     case "ne":
-      if (value === null) {
-        return sql`${column} IS NOT NULL`
-      }
-      if (isPrimitive(value)) {
-        return sql`${column} <> ${value}`
-      }
-      return sql`${column} <> ${String(value)}`
+      return value === null
+        ? sql`${column} IS NOT NULL`
+        : sql`${column} <> ${toSqlValue(value)}`
 
     case "lt":
-      if (isPrimitive(value)) {
-        return sql`${column} < ${value}`
-      }
-      return sql`${column} < ${String(value)}`
+      return sql`${column} < ${toSqlValue(value)}`
 
     case "lte":
-      if (isPrimitive(value)) {
-        return sql`${column} <= ${value}`
-      }
-      return sql`${column} <= ${String(value)}`
+      return sql`${column} <= ${toSqlValue(value)}`
 
     case "gt":
-      if (isPrimitive(value)) {
-        return sql`${column} > ${value}`
-      }
-      return sql`${column} > ${String(value)}`
+      return sql`${column} > ${toSqlValue(value)}`
 
     case "gte":
-      if (isPrimitive(value)) {
-        return sql`${column} >= ${value}`
-      }
-      return sql`${column} >= ${String(value)}`
+      return sql`${column} >= ${toSqlValue(value)}`
 
     case "in":
-      if (!Array.isArray(value) || value.length === 0) {
-        return sql`1 = 0`
-      }
-      return sql`${sql.in(where.field, value as readonly Primitive[])}`
+      return !Array.isArray(value) || value.length === 0
+        ? sql`1 = 0`
+        : sql`${column} IN ${sql.in(value as readonly Primitive[])}`
 
     case "not_in":
-      if (!Array.isArray(value) || value.length === 0) {
-        return sql`1 = 1`
-      }
-      return sql`${column} NOT IN ${sql.in(value as readonly Primitive[])}`
+      return !Array.isArray(value) || value.length === 0
+        ? sql`1 = 1`
+        : sql`${column} NOT IN ${sql.in(value as readonly Primitive[])}`
 
     case "contains":
       return sql`${column} LIKE ${"%" + String(value) + "%"}`
@@ -89,10 +80,6 @@ const whereToFragment = (
 
     case "ends_with":
       return sql`${column} LIKE ${"%" + String(value)}`
-
-    default: {
-      throw new Error(`Unknown operator: ${operator}`)
-    }
   }
 }
 
@@ -104,36 +91,20 @@ export const buildWhereClause = (
     return null
   }
 
-  const andConditions: Fragment[] = []
-  const orConditions: Fragment[] = []
+  const andConditions = conditions
+    .filter((c) => c.connector === "AND")
+    .map((c) => whereToFragment(sql, c))
 
-  for (const condition of conditions) {
-    const fragment = whereToFragment(sql, condition)
+  const orConditions = conditions
+    .filter((c) => c.connector === "OR")
+    .map((c) => whereToFragment(sql, c))
 
-    if (condition.connector === "OR") {
-      orConditions.push(fragment)
-    } else {
-      andConditions.push(fragment)
-    }
-  }
+  const parts = [
+    andConditions.length > 0 ? sql.and(andConditions) : null,
+    orConditions.length > 0 ? sql`(${sql.or(orConditions)})` : null,
+  ].filter((p): p is Fragment => p !== null)
 
-  const parts: Fragment[] = []
-
-  if (andConditions.length > 0) {
-    parts.push(sql.and(andConditions))
-  }
-
-  if (orConditions.length > 0) {
-    parts.push(sql`(${sql.or(orConditions)})`)
-  }
-
-  if (parts.length === 0) {
-    return null
-  }
-
-  if (parts.length === 1) {
-    return parts[0]!
-  }
-
+  if (parts.length === 0) return null
+  if (parts.length === 1) return parts[0]!
   return sql.and(parts)
 }
