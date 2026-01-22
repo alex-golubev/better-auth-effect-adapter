@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, expect, it } from "vitest"
 import type { WhereCondition } from "./where-builder.js"
 import { buildWhereClause } from "./where-builder.js"
 
@@ -30,7 +30,7 @@ const createMockSql = () => {
     return { __fragment: result }
   }
 
-  const callableSql = Object.assign(
+  return Object.assign(
     (stringsOrIdentifier: TemplateStringsArray | string, ...values: unknown[]) => {
       if (typeof stringsOrIdentifier === "string") {
         return identifier(stringsOrIdentifier)
@@ -50,15 +50,13 @@ const createMockSql = () => {
       }),
       join:
         (_separator: string, _wrapped: boolean, _fallback: string) =>
-        (items: { __fragment: string }[]) => ({
-          __fragment: items.map((i) => i.__fragment).join(", "),
-        }),
-      insert: () => ({ __fragment: "INSERT_DATA" }),
-      update: () => ({ __fragment: "UPDATE_DATA" }),
+          (items: { __fragment: string }[]) => ({
+            __fragment: items.map((i) => i.__fragment).join(", "),
+          }),
+      insert: () => ({__fragment: "INSERT_DATA"}),
+      update: () => ({__fragment: "UPDATE_DATA"}),
     },
   )
-
-  return callableSql
 }
 
 const getFragment = (result: unknown): string => {
