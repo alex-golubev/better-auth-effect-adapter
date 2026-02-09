@@ -52,7 +52,9 @@ export const buildOrderBy = (
  * @returns {Fragment} The constructed SQL fragment representing the LIMIT and OFFSET clauses.
  */
 export const buildLimitOffset = (sql: SqlClient.SqlClient, limit: number, offset?: number): Fragment =>
-  offset ? sql`LIMIT ${limit} OFFSET ${offset}` : sql`LIMIT ${limit}`
+  offset
+    ? sql`LIMIT ${sql.literal(String(limit))} OFFSET ${sql.literal(String(offset))}`
+    : sql`LIMIT ${sql.literal(String(limit))}`
 
 /**
  * Ensures the presence of a WHERE clause and returns an Effect based on its existence.

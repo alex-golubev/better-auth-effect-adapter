@@ -3,9 +3,9 @@ import { Effect, ManagedRuntime } from 'effect'
 import { SqlClient } from '@effect/sql'
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { runAdapterTest } from 'better-auth/adapters/test'
-import { effectSqlAdapter } from './adapter.js'
+import { effectSqlAdapter } from '../src/adapter.js'
 
-describe('effectSqlAdapter - SQLite integration', () => {
+describe('effectSqlAdapter - SQLite', () => {
   const SqliteLive = SqliteClient.layer({ filename: ':memory:' })
   const runtime = ManagedRuntime.make(SqliteLive)
 

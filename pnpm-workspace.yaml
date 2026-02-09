@@ -3,12 +3,15 @@ onlyBuiltDependencies:
   - '3'
   - b
   - better-sqlite3
+  - cpu-features
   - e
   - esbuild
   - i
   - l
   - msgpackr-extract
+  - protobufjs
   - q
   - r
   - s
+  - ssh2
   - t
