@@ -1,81 +1,25 @@
 import { Effect, Option, pipe, Runtime } from 'effect'
 import { SqlClient } from '@effect/sql'
-import type { Fragment } from '@effect/sql/Statement'
-import type { Primitive } from './types.js'
 import { createAdapterFactory, type Where, type JoinConfig } from 'better-auth/adapters'
 import type { DBTransactionAdapter } from 'better-auth/types'
 import type { WhereCondition } from './where-builder.js'
 import { buildWhereClause } from './where-builder.js'
+import { buildSelectColumns, buildOrderBy, buildLimitOffset, requireWhereClause } from './query-builder.js'
 import { getReturningStrategy } from './returning.js'
 import { resolveJoins } from './join-builder.js'
 import { mapSqlError, runAdapterEffect } from './errors.js'
-import type { EffectSqlAdapterConfig, SqlData } from './types.js'
+import { getAffectedRows, toSqlData } from './transforms.js'
+import type { EffectSqlAdapterConfig } from './types.js'
 
 /**
- * Retrieves the number of affected rows from the input object, based on known keys.
- * Uses Option monad for safe property access.
- */
-const getAffectedRows = (raw: unknown): number =>
-  pipe(
-    raw,
-    Option.liftPredicate((v): v is Record<string, unknown> => typeof v === 'object' && v !== null),
-    Option.flatMap((r) => Option.fromNullable(r.affectedRows ?? r.rowCount ?? r.changes)),
-    Option.filter((v): v is number => typeof v === 'number'),
-    Option.getOrElse(() => 0),
-  )
-
-/**
- * Determines if a given value is either a plain object or an array.
- */
-const isPlainObjectOrArray = (value: unknown): value is Record<string, unknown> | unknown[] =>
-  value !== null &&
-  typeof value === 'object' &&
-  (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype)
-
-/**
- * Checks if a value is a SQL primitive type.
- */
-const isPrimitive = (value: unknown): value is Primitive | undefined =>
-  value === null ||
-  value === undefined ||
-  typeof value === 'string' ||
-  typeof value === 'number' ||
-  typeof value === 'bigint' ||
-  typeof value === 'boolean' ||
-  value instanceof Date ||
-  value instanceof Int8Array ||
-  value instanceof Uint8Array
-
-/**
- * Safely serializes a value to JSON, handling circular references.
- */
-const safeJsonStringify = (value: Record<string, unknown> | unknown[]): string => {
-  const seen = new WeakSet()
-  return JSON.stringify(value, (_, v) => {
-    if (typeof v === 'object' && v !== null) {
-      if (seen.has(v)) return undefined
-      seen.add(v)
-    }
-    return v
-  })
-}
-
-/**
- * Converts a single value to SQL-compatible format.
- */
-const convertToSqlValue = (value: unknown): Primitive | undefined =>
-  isPrimitive(value) ? value : isPlainObjectOrArray(value) ? safeJsonStringify(value) : String(value)
-
-/**
- * Converts a given data object into a format compatible with SQL data requirements.
- * Pure function using Object.fromEntries for immutable transformation.
- */
-const toSqlData = (data: Record<string, unknown>): SqlData =>
-  Object.fromEntries(Object.entries(data).map(([key, value]) => [key, convertToSqlValue(value)]))
-
-/**
- * Converts an array of `Where` conditions into a formatted array of `WhereCondition` objects.
- * Field names are already mapped to database column names by the factory's `transformWhereClause`.
+ * Transforms an array of `Where` objects into an array of `WhereCondition` objects.
+ *
+ * The function takes a list of `Where` objects and maps each object to a corresponding
+ * `WhereCondition` by extracting and normalizing its properties. If the `operator` or
+ * `connector` properties are not specified, it assigns default values of `'eq'` and `'AND'` respectively.
+ *
+ * @param {Required<Where>[]} where - An array of `Where` objects with all required properties.
+ * @returns {WhereCondition[]} An array of transformed `WhereCondition` objects.
  */
 const toWhereConditions = (where: Required<Where>[]): WhereCondition[] =>
   where.map((w) => ({
@@ -84,49 +28,6 @@ const toWhereConditions = (where: Required<Where>[]): WhereCondition[] =>
     operator: w.operator ?? 'eq',
     connector: w.connector ?? 'AND',
   }))
-
-/**
- * Requires a WHERE clause or dies with an error.
- * Extracts common validation logic for UPDATE/DELETE operations.
- */
-const requireWhereClause = (clause: Fragment | null, operation: string): Effect.Effect<Fragment, never, never> =>
-  clause ? Effect.succeed(clause) : Effect.die(new Error(`${operation} requires WHERE clause`))
-
-/**
- * Builds SELECT columns fragment.
- * Maps field names via getFieldName since the factory does not transform `select`.
- */
-const buildSelectColumns = (
-  sql: SqlClient.SqlClient,
-  select: string[] | undefined,
-  getFieldName: (opts: { model: string; field: string }) => string,
-  model: string,
-): Fragment => {
-  if (!select?.length) return sql.literal('*')
-  const columns = select.map((col) => sql`${sql(getFieldName({ model, field: col }))}`)
-  return sql.join(', ', false, '*')(columns)
-}
-
-/**
- * Builds ORDER BY fragment.
- */
-const buildOrderBy = (
-  sql: SqlClient.SqlClient,
-  sortBy: { field: string; direction: 'asc' | 'desc' } | undefined,
-  getFieldName: (opts: { model: string; field: string }) => string,
-  model: string,
-): Fragment => {
-  if (!sortBy) return sql.literal('')
-  const field = sql(getFieldName({ model, field: sortBy.field }))
-  const direction = sortBy.direction === 'desc' ? sql.literal('DESC') : sql.literal('ASC')
-  return sql`ORDER BY ${field} ${direction}`
-}
-
-/**
- * Builds LIMIT/OFFSET fragment.
- */
-const buildLimitOffset = (sql: SqlClient.SqlClient, limit: number, offset?: number): Fragment =>
-  offset ? sql`LIMIT ${limit} OFFSET ${offset}` : sql`LIMIT ${limit}`
 
 /**
  * Type for a function that runs an Effect and returns a Promise.
@@ -427,9 +328,11 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
 
               const txRunner: EffectRunner = <A>(effect: Effect.Effect<A, unknown, SqlClient.SqlClient>) =>
                 Runtime.runPromise(txRuntime)(
-                  effect.pipe(
-                    Effect.catchAll((error) => Effect.die(mapSqlError(error))),
-                  ) as Effect.Effect<A, never, SqlClient.SqlClient>,
+                  effect.pipe(Effect.catchAll((error) => Effect.die(mapSqlError(error)))) as Effect.Effect<
+                    A,
+                    never,
+                    SqlClient.SqlClient
+                  >,
                 )
 
               const txFactory = createAdapterFactory({

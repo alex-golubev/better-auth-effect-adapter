@@ -177,10 +177,7 @@ describe('mapSqlError', () => {
     })
 
     it('should not duplicate cause message already contained in base message', () => {
-      const error = createSqlError(
-        'UNIQUE constraint failed: users.email',
-        new Error('UNIQUE constraint failed'),
-      )
+      const error = createSqlError('UNIQUE constraint failed: users.email', new Error('UNIQUE constraint failed'))
       const result = mapSqlError(error)
       expect(result.message).toBe('UNIQUE constraint failed: users.email')
     })
