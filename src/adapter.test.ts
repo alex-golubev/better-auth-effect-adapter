@@ -259,55 +259,41 @@ describe('adapter utilities', () => {
       connector: string
     }
 
-    const toWhereConditions = (
-      where: Where[],
-      getFieldName: (opts: { model: string; field: string }) => string,
-      model: string,
-    ): WhereCondition[] =>
+    // Field names are already mapped by the factory's transformWhereClause,
+    // so toWhereConditions just passes them through and applies defaults.
+    const toWhereConditions = (where: Where[]): WhereCondition[] =>
       where.map((w) => ({
-        field: getFieldName({ model, field: w.field }),
+        field: w.field,
         value: w.value,
         operator: w.operator ?? 'eq',
         connector: w.connector ?? 'AND',
       }))
 
-    const simpleGetFieldName = ({ field }: { model: string; field: string }) => field
-
     it('should convert simple where condition', () => {
-      const result = toWhereConditions([{ field: 'id', value: 1 }], simpleGetFieldName, 'users')
+      const result = toWhereConditions([{ field: 'id', value: 1 }])
       expect(result).toEqual([{ field: 'id', value: 1, operator: 'eq', connector: 'AND' }])
     })
 
     it('should use provided operator', () => {
-      const result = toWhereConditions([{ field: 'age', value: 18, operator: 'gte' }], simpleGetFieldName, 'users')
+      const result = toWhereConditions([{ field: 'age', value: 18, operator: 'gte' }])
       expect(result).toEqual([{ field: 'age', value: 18, operator: 'gte', connector: 'AND' }])
     })
 
     it('should use provided connector', () => {
-      const result = toWhereConditions(
-        [{ field: 'status', value: 'active', connector: 'OR' }],
-        simpleGetFieldName,
-        'users',
-      )
+      const result = toWhereConditions([{ field: 'status', value: 'active', connector: 'OR' }])
       expect(result).toEqual([{ field: 'status', value: 'active', operator: 'eq', connector: 'OR' }])
     })
 
-    it('should use custom getFieldName function', () => {
-      const prefixedGetFieldName = ({ model, field }: { model: string; field: string }) => `${model}_${field}`
-
-      const result = toWhereConditions([{ field: 'id', value: 1 }], prefixedGetFieldName, 'users')
-      expect(result).toEqual([{ field: 'users_id', value: 1, operator: 'eq', connector: 'AND' }])
+    it('should pass through pre-mapped field names without transformation', () => {
+      const result = toWhereConditions([{ field: 'user_email', value: 'test@example.com' }])
+      expect(result).toEqual([{ field: 'user_email', value: 'test@example.com', operator: 'eq', connector: 'AND' }])
     })
 
     it('should handle multiple conditions', () => {
-      const result = toWhereConditions(
-        [
-          { field: 'status', value: 'active' },
-          { field: 'role', value: 'admin', operator: 'eq', connector: 'OR' },
-        ],
-        simpleGetFieldName,
-        'users',
-      )
+      const result = toWhereConditions([
+        { field: 'status', value: 'active' },
+        { field: 'role', value: 'admin', operator: 'eq', connector: 'OR' },
+      ])
       expect(result).toHaveLength(2)
       expect(result[0]).toEqual({
         field: 'status',
