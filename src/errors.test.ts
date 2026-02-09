@@ -45,9 +45,10 @@ describe('Error classes', () => {
 })
 
 describe('mapSqlError', () => {
-  const createSqlError = (message: string) => ({
+  const createSqlError = (message: string, cause?: unknown) => ({
     _tag: 'SqlError' as const,
     message,
+    cause,
   })
 
   describe('non-SqlError handling', () => {
@@ -159,6 +160,44 @@ describe('mapSqlError', () => {
       const error = createSqlError('Connection lost: The server closed the connection')
       const result = mapSqlError(error)
       expect(result._tag).toBe('ConnectionError')
+    })
+  })
+
+  describe('cause extraction and deduplication', () => {
+    it('should include cause message from Error instance', () => {
+      const error = createSqlError('query failed', new Error('connection reset'))
+      const result = mapSqlError(error)
+      expect(result.message).toBe('query failed: connection reset')
+    })
+
+    it('should include cause message from plain object with message', () => {
+      const error = createSqlError('query failed', { message: 'timeout exceeded' })
+      const result = mapSqlError(error)
+      expect(result.message).toBe('query failed: timeout exceeded')
+    })
+
+    it('should not duplicate cause message already contained in base message', () => {
+      const error = createSqlError('UNIQUE constraint failed: users.email', new Error('UNIQUE constraint failed'))
+      const result = mapSqlError(error)
+      expect(result.message).toBe('UNIQUE constraint failed: users.email')
+    })
+
+    it('should ignore cause without message property', () => {
+      const error = createSqlError('query failed', { code: 42 })
+      const result = mapSqlError(error)
+      expect(result.message).toBe('query failed')
+    })
+
+    it('should ignore null cause', () => {
+      const error = createSqlError('query failed', null)
+      const result = mapSqlError(error)
+      expect(result.message).toBe('query failed')
+    })
+
+    it('should ignore primitive cause', () => {
+      const error = createSqlError('query failed', 'some string')
+      const result = mapSqlError(error)
+      expect(result.message).toBe('query failed')
     })
   })
 
