@@ -6,7 +6,7 @@ import { convertToSqlValue } from './transforms.js'
 
 export interface WhereCondition {
   field: string
-  value: string | number | boolean | string[] | number[] | Date | null
+  value: string | number | boolean | string[] | number[] | boolean[] | Date[] | Date | null
   operator: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte' | 'in' | 'not_in' | 'contains' | 'starts_with' | 'ends_with'
   connector: 'AND' | 'OR'
 }
@@ -14,7 +14,9 @@ export interface WhereCondition {
 /**
  * Escapes special characters in a string used within a SQL LIKE clause.
  */
-const escapeLikePattern = (value: string): string => value.replace(/[%_\\]/g, '\\$&')
+const LIKE_ESCAPE_CHAR = '!'
+const LIKE_ESCAPE_LITERAL = `'${LIKE_ESCAPE_CHAR}'`
+const escapeLikePattern = (value: string): string => value.replace(/[!%_]/g, `${LIKE_ESCAPE_CHAR}$&`)
 
 /**
  * Converts an input value into a SQL-compatible primitive value.
@@ -22,6 +24,24 @@ const escapeLikePattern = (value: string): string => value.replace(/[%_\\]/g, '\
  * booleans (→ 0/1) and Dates (→ ISO string) across WHERE and INSERT/UPDATE.
  */
 const toSqlValue = (value: unknown): Primitive => convertToSqlValue(value) ?? null
+
+/**
+ * Normalizes list values for IN / NOT IN clauses by converting each item
+ * using the same rules as other SQL-bound values (booleans -> 0/1, dates -> ISO).
+ */
+const toSqlList = (value: WhereCondition['value']): readonly Primitive[] | null =>
+  pipe(
+    value,
+    Option.liftPredicate(Array.isArray),
+    Option.map((arr) =>
+      arr.map((item) => convertToSqlValue(item)).filter((item): item is Primitive => item !== undefined),
+    ),
+    Option.filter((arr) => arr.length > 0),
+    Option.getOrNull,
+  )
+
+const buildLikeFragment = (sql: SqlClient.SqlClient, field: string, pattern: string): Fragment =>
+  sql`${sql(field)} LIKE ${pattern} ESCAPE ${sql.literal(LIKE_ESCAPE_LITERAL)}`
 
 /**
  * Operator handler type for building SQL fragments.
@@ -45,21 +65,21 @@ const operatorHandlers: Record<WhereCondition['operator'], OperatorHandler> = {
 
   gte: (sql, field, value) => sql`${sql(field)} >= ${toSqlValue(value)}`,
 
-  in: (sql, field, value) =>
-    !Array.isArray(value) || value.length === 0
-      ? sql`1 = 0`
-      : sql`${sql(field)} IN ${sql.in(value as readonly Primitive[])}`,
+  in: (sql, field, value) => {
+    const values = toSqlList(value)
+    return values === null ? sql`1 = 0` : sql`${sql(field)} IN ${sql.in(values)}`
+  },
 
-  not_in: (sql, field, value) =>
-    !Array.isArray(value) || value.length === 0
-      ? sql`1 = 1`
-      : sql`${sql(field)} NOT IN ${sql.in(value as readonly Primitive[])}`,
+  not_in: (sql, field, value) => {
+    const values = toSqlList(value)
+    return values === null ? sql`1 = 1` : sql`${sql(field)} NOT IN ${sql.in(values)}`
+  },
 
-  contains: (sql, field, value) => sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value)) + '%'}`,
+  contains: (sql, field, value) => buildLikeFragment(sql, field, `%${escapeLikePattern(String(value))}%`),
 
-  starts_with: (sql, field, value) => sql`${sql(field)} LIKE ${escapeLikePattern(String(value)) + '%'}`,
+  starts_with: (sql, field, value) => buildLikeFragment(sql, field, `${escapeLikePattern(String(value))}%`),
 
-  ends_with: (sql, field, value) => sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value))}`,
+  ends_with: (sql, field, value) => buildLikeFragment(sql, field, `%${escapeLikePattern(String(value))}`),
 }
 
 /**

@@ -268,6 +268,30 @@ describe('buildWhereClause', () => {
       expect(result).not.toBeNull()
       expect(getFragment(result)).toContain('1 = 1')
     })
+
+    it('should convert boolean array values for in operator', () => {
+      const sql = createMockSql()
+      const conditions: WhereCondition[] = [
+        { field: 'emailVerified', value: [true, false], operator: 'in', connector: 'AND' },
+      ]
+
+      const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
+      expect(result).not.toBeNull()
+      const fragment = getFragment(result)
+      expect(fragment).toContain('(1, 0)')
+      expect(fragment).not.toContain('true')
+      expect(fragment).not.toContain('false')
+    })
+
+    it('should convert date array values for in operator', () => {
+      const sql = createMockSql()
+      const date = new Date('2024-01-15T10:00:00Z')
+      const conditions: WhereCondition[] = [{ field: 'createdAt', value: [date], operator: 'in', connector: 'AND' }]
+
+      const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
+      expect(result).not.toBeNull()
+      expect(getFragment(result)).toContain('2024-01-15T10:00:00.000Z')
+    })
   })
 
   describe('LIKE operators', () => {
@@ -278,6 +302,7 @@ describe('buildWhereClause', () => {
       expect(result).not.toBeNull()
       const fragment = getFragment(result)
       expect(fragment).toContain('LIKE')
+      expect(fragment).toContain('ESCAPE')
       expect(fragment).toContain('%john%')
     })
 
@@ -290,6 +315,7 @@ describe('buildWhereClause', () => {
       expect(result).not.toBeNull()
       const fragment = getFragment(result)
       expect(fragment).toContain('LIKE')
+      expect(fragment).toContain('ESCAPE')
       expect(fragment).toContain('test%')
     })
 
@@ -302,6 +328,7 @@ describe('buildWhereClause', () => {
       expect(result).not.toBeNull()
       const fragment = getFragment(result)
       expect(fragment).toContain('LIKE')
+      expect(fragment).toContain('ESCAPE')
       expect(fragment).toContain('%@example.com')
     })
 
@@ -310,7 +337,7 @@ describe('buildWhereClause', () => {
       const conditions: WhereCondition[] = [{ field: 'pattern', value: '100%', operator: 'contains', connector: 'AND' }]
       const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
       expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain('100\\%')
+      expect(getFragment(result)).toContain('100!%')
     })
 
     it('should escape underscore in LIKE patterns', () => {
@@ -320,17 +347,17 @@ describe('buildWhereClause', () => {
       ]
       const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
       expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain('user\\_name')
+      expect(getFragment(result)).toContain('user!_name')
     })
 
-    it('should escape backslash in LIKE patterns', () => {
+    it('should keep backslash as a literal character in LIKE patterns', () => {
       const sql = createMockSql()
       const conditions: WhereCondition[] = [
         { field: 'path', value: 'C:\\path', operator: 'contains', connector: 'AND' },
       ]
       const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
       expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain('C:\\\\path')
+      expect(getFragment(result)).toContain('C:\\path')
     })
 
     it('should escape % in starts_with', () => {
@@ -340,7 +367,7 @@ describe('buildWhereClause', () => {
       ]
       const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
       expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain('50\\%')
+      expect(getFragment(result)).toContain('50!%')
     })
 
     it('should escape _ in ends_with', () => {
@@ -350,17 +377,17 @@ describe('buildWhereClause', () => {
       ]
       const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
       expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain('test\\_v1')
+      expect(getFragment(result)).toContain('test!_v1')
     })
 
-    it('should escape backslash in starts_with', () => {
+    it('should keep leading backslash as a literal character in starts_with', () => {
       const sql = createMockSql()
       const conditions: WhereCondition[] = [
         { field: 'path', value: '\\root', operator: 'starts_with', connector: 'AND' },
       ]
       const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
       expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain('\\\\root')
+      expect(getFragment(result)).toContain('\\root')
     })
 
     it('should escape multiple special chars in ends_with', () => {
@@ -370,7 +397,17 @@ describe('buildWhereClause', () => {
       ]
       const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
       expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain('50\\%\\_off')
+      expect(getFragment(result)).toContain('50!%!_off')
+    })
+
+    it('should escape the escape character itself', () => {
+      const sql = createMockSql()
+      const conditions: WhereCondition[] = [
+        { field: 'name', value: 'wow!nice', operator: 'contains', connector: 'AND' },
+      ]
+      const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
+      expect(result).not.toBeNull()
+      expect(getFragment(result)).toContain('wow!!nice')
     })
   })
 
