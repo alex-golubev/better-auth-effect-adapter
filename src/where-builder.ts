@@ -2,6 +2,7 @@ import { Option, pipe } from 'effect'
 import type { SqlClient } from '@effect/sql'
 import type { Fragment } from '@effect/sql/Statement'
 import type { Primitive } from './types.js'
+import { convertToSqlValue } from './transforms.js'
 
 export interface WhereCondition {
   field: string
@@ -11,27 +12,18 @@ export interface WhereCondition {
 }
 
 /**
- * Type guard for SQL primitive values.
- */
-const isPrimitive = (value: unknown): value is Primitive =>
-  value === null ||
-  typeof value === 'string' ||
-  typeof value === 'number' ||
-  typeof value === 'bigint' ||
-  typeof value === 'boolean' ||
-  value instanceof Date ||
-  value instanceof Int8Array ||
-  value instanceof Uint8Array
-
-/**
  * Escapes special characters in a string used within a SQL LIKE clause.
  */
 const escapeLikePattern = (value: string): string => value.replace(/[%_\\]/g, '\\$&')
 
+const LIKE_ESCAPE = "ESCAPE '\\'"
+
 /**
  * Converts an input value into a SQL-compatible primitive value.
+ * Delegates to convertToSqlValue to ensure consistent treatment of
+ * booleans (→ 0/1) and Dates (→ ISO string) across WHERE and INSERT/UPDATE.
  */
-const toSqlValue = (value: unknown): Primitive => (isPrimitive(value) ? value : String(value))
+const toSqlValue = (value: unknown): Primitive => convertToSqlValue(value) ?? null
 
 /**
  * Operator handler type for building SQL fragments.
@@ -65,11 +57,14 @@ const operatorHandlers: Record<WhereCondition['operator'], OperatorHandler> = {
       ? sql`1 = 1`
       : sql`${sql(field)} NOT IN ${sql.in(value as readonly Primitive[])}`,
 
-  contains: (sql, field, value) => sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value)) + '%'}`,
+  contains: (sql, field, value) =>
+    sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value)) + '%'} ${sql.literal(LIKE_ESCAPE)}`,
 
-  starts_with: (sql, field, value) => sql`${sql(field)} LIKE ${escapeLikePattern(String(value)) + '%'}`,
+  starts_with: (sql, field, value) =>
+    sql`${sql(field)} LIKE ${escapeLikePattern(String(value)) + '%'} ${sql.literal(LIKE_ESCAPE)}`,
 
-  ends_with: (sql, field, value) => sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value))}`,
+  ends_with: (sql, field, value) =>
+    sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value))} ${sql.literal(LIKE_ESCAPE)}`,
 }
 
 /**
