@@ -402,7 +402,9 @@ describe('buildWhereClause', () => {
 
     it('should escape the escape character itself', () => {
       const sql = createMockSql()
-      const conditions: WhereCondition[] = [{ field: 'name', value: 'wow!nice', operator: 'contains', connector: 'AND' }]
+      const conditions: WhereCondition[] = [
+        { field: 'name', value: 'wow!nice', operator: 'contains', connector: 'AND' },
+      ]
       const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
       expect(result).not.toBeNull()
       expect(getFragment(result)).toContain('wow!!nice')

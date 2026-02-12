@@ -33,7 +33,9 @@ const toSqlList = (value: WhereCondition['value']): readonly Primitive[] | null 
   pipe(
     value,
     Option.liftPredicate(Array.isArray),
-    Option.map((arr) => arr.map((item) => convertToSqlValue(item)).filter((item): item is Primitive => item !== undefined)),
+    Option.map((arr) =>
+      arr.map((item) => convertToSqlValue(item)).filter((item): item is Primitive => item !== undefined),
+    ),
     Option.filter((arr) => arr.length > 0),
     Option.getOrNull,
   )
