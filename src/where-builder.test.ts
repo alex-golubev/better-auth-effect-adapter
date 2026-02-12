@@ -445,5 +445,4 @@ describe('buildWhereClause', () => {
       expect(fragment).not.toContain('false')
     })
   })
-
 })
