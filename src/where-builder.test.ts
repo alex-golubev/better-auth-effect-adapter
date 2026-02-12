@@ -446,33 +446,4 @@ describe('buildWhereClause', () => {
     })
   })
 
-  describe('ESCAPE clause in LIKE operators', () => {
-    it('should include ESCAPE clause in contains', () => {
-      const sql = createMockSql()
-      const conditions: WhereCondition[] = [{ field: 'name', value: 'john', operator: 'contains', connector: 'AND' }]
-      const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
-      expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain("ESCAPE '\\'")
-    })
-
-    it('should include ESCAPE clause in starts_with', () => {
-      const sql = createMockSql()
-      const conditions: WhereCondition[] = [
-        { field: 'email', value: 'test', operator: 'starts_with', connector: 'AND' },
-      ]
-      const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
-      expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain("ESCAPE '\\'")
-    })
-
-    it('should include ESCAPE clause in ends_with', () => {
-      const sql = createMockSql()
-      const conditions: WhereCondition[] = [
-        { field: 'email', value: '@example.com', operator: 'ends_with', connector: 'AND' },
-      ]
-      const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
-      expect(result).not.toBeNull()
-      expect(getFragment(result)).toContain("ESCAPE '\\'")
-    })
-  })
 })

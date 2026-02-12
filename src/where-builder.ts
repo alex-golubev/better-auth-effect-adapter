@@ -16,8 +16,6 @@ export interface WhereCondition {
  */
 const escapeLikePattern = (value: string): string => value.replace(/[%_\\]/g, '\\$&')
 
-const LIKE_ESCAPE = "ESCAPE '\\'"
-
 /**
  * Converts an input value into a SQL-compatible primitive value.
  * Delegates to convertToSqlValue to ensure consistent treatment of
@@ -57,14 +55,11 @@ const operatorHandlers: Record<WhereCondition['operator'], OperatorHandler> = {
       ? sql`1 = 1`
       : sql`${sql(field)} NOT IN ${sql.in(value as readonly Primitive[])}`,
 
-  contains: (sql, field, value) =>
-    sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value)) + '%'} ${sql.literal(LIKE_ESCAPE)}`,
+  contains: (sql, field, value) => sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value)) + '%'}`,
 
-  starts_with: (sql, field, value) =>
-    sql`${sql(field)} LIKE ${escapeLikePattern(String(value)) + '%'} ${sql.literal(LIKE_ESCAPE)}`,
+  starts_with: (sql, field, value) => sql`${sql(field)} LIKE ${escapeLikePattern(String(value)) + '%'}`,
 
-  ends_with: (sql, field, value) =>
-    sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value))} ${sql.literal(LIKE_ESCAPE)}`,
+  ends_with: (sql, field, value) => sql`${sql(field)} LIKE ${'%' + escapeLikePattern(String(value))}`,
 }
 
 /**
