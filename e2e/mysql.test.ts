@@ -4,11 +4,11 @@ import { SqlClient } from '@effect/sql'
 import { MysqlClient } from '@effect/sql-mysql2'
 import { MySqlContainer, type StartedMySqlContainer } from '@testcontainers/mysql'
 import { runAdapterTest } from 'better-auth/adapters/test'
-import { effectSqlAdapter } from '../src/adapter.js'
+import { effectSqlAdapter } from '../src'
 
 describe('effectSqlAdapter - MySQL', () => {
-  let container: StartedMySqlContainer
-  let runtime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, unknown>
+  let container: StartedMySqlContainer | undefined
+  let runtime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, unknown> | undefined
   let factory: ReturnType<typeof effectSqlAdapter>
 
   beforeAll(async () => {
@@ -88,7 +88,7 @@ describe('effectSqlAdapter - MySQL', () => {
   }, 60_000)
 
   afterAll(async () => {
-    await runtime.dispose()
+    await runtime?.dispose()
     await container?.stop()
   })
 

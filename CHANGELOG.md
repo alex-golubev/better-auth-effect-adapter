@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.2 (2026-02-12)
+
+### Bug Fixes
+
+- Fix MySQL `LIKE` query generation by using explicit `ESCAPE '!'` and dialect-safe pattern escaping for `contains`, `starts_with`, and `ends_with`
+- Fix `IN` / `NOT IN` value handling by normalizing array members through `convertToSqlValue` (including `boolean[]` -> `0/1` and `Date[]` -> ISO strings)
+- Prevent secondary teardown failures in PostgreSQL/MySQL e2e tests when container startup fails by guarding `runtime.dispose()` and container shutdown
+
+### Tests
+
+- Add unit regression tests for `where-builder` covering `IN` with `boolean[]` and `Date[]`
+- Add unit regression coverage for `LIKE ... ESCAPE` generation and escaping of special characters (including the escape character itself)
+- Add SQLite e2e regression tests for `IN` filters with boolean and date values
+
+## 0.3.1 (2026-02-12)
+
+### Refactoring
+
+- Standardize SQL value conversion in `where-builder` for consistent handling across operators
+- Refine `LIKE` operator implementation and related tests
+- Minor test suite cleanup in `where-builder` specs
+
 ## 0.3.0 (2026-02-09)
 
 ### Bug Fixes

@@ -4,11 +4,11 @@ import { SqlClient } from '@effect/sql'
 import { PgClient } from '@effect/sql-pg'
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql'
 import { runAdapterTest } from 'better-auth/adapters/test'
-import { effectSqlAdapter } from '../src/adapter.js'
+import { effectSqlAdapter } from '../src'
 
 describe('effectSqlAdapter - PostgreSQL', () => {
-  let container: StartedPostgreSqlContainer
-  let runtime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, unknown>
+  let container: StartedPostgreSqlContainer | undefined
+  let runtime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, unknown> | undefined
   let factory: ReturnType<typeof effectSqlAdapter>
 
   beforeAll(async () => {
@@ -88,7 +88,7 @@ describe('effectSqlAdapter - PostgreSQL', () => {
   }, 60_000)
 
   afterAll(async () => {
-    await runtime.dispose()
+    await runtime?.dispose()
     await container?.stop()
   })
 
