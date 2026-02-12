@@ -413,12 +413,36 @@ describe('buildWhereClause', () => {
   })
 
   describe('Date handling', () => {
-    it('should handle Date values', () => {
+    it('should convert Date to ISO string for comparison operators', () => {
       const sql = createMockSql()
       const date = new Date('2024-01-15T10:00:00Z')
       const conditions: WhereCondition[] = [{ field: 'created_at', value: date, operator: 'gt', connector: 'AND' }]
       const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
       expect(result).not.toBeNull()
+      const fragment = getFragment(result)
+      expect(fragment).toContain('2024-01-15T10:00:00.000Z')
+    })
+  })
+
+  describe('boolean conversion', () => {
+    it('should convert boolean true to 1 for eq operator', () => {
+      const sql = createMockSql()
+      const conditions: WhereCondition[] = [{ field: 'emailVerified', value: true, operator: 'eq', connector: 'AND' }]
+      const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
+      expect(result).not.toBeNull()
+      const fragment = getFragment(result)
+      expect(fragment).toContain('1')
+      expect(fragment).not.toContain('true')
+    })
+
+    it('should convert boolean false to 0 for eq operator', () => {
+      const sql = createMockSql()
+      const conditions: WhereCondition[] = [{ field: 'emailVerified', value: false, operator: 'eq', connector: 'AND' }]
+      const result = buildWhereClause(sql as unknown as Parameters<typeof buildWhereClause>[0], conditions)
+      expect(result).not.toBeNull()
+      const fragment = getFragment(result)
+      expect(fragment).toContain('0')
+      expect(fragment).not.toContain('false')
     })
   })
 })

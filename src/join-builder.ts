@@ -127,42 +127,31 @@ export const attachJoinResults = (
 }
 
 /**
- * Resolves the join entry by executing a SQL query to fetch related rows from the joined table based on the join configuration.
- * The method attaches the fetched rows to the current results and returns the updated results.
- *
- * @param {SqlClient.SqlClient} sql - The SQL client used to execute the database query.
- * @param {ReadonlyArray<Record<string, unknown>>} mainRecords - The main records used as the source for extracting join criteria values.
- * @param {Record<string, unknown>[]} currentResults - The currently accumulated result set to which the join results will be added.
- * @param {string} joinedTable - The name of the table to join with.
- * @param {JoinConfigEntry} joinEntry - The configuration defining the join conditions, including the fields to match.
- * @returns {Effect.Effect<Record<string, unknown>[], unknown>} An Effect that resolves to the updated result set with the join data attached or handles the absence of matching records.
+ * Fetches joined rows from the database for a single join entry.
+ * Returns only the fetched rows, without attaching to main records.
  */
-const resolveJoinEntry = (
+const fetchJoinedRows = (
   sql: SqlClient.SqlClient,
   mainRecords: ReadonlyArray<Record<string, unknown>>,
-  currentResults: Record<string, unknown>[],
   joinedTable: string,
   joinEntry: JoinConfigEntry,
-): Effect.Effect<Record<string, unknown>[], unknown> =>
+): Effect.Effect<ReadonlyArray<Record<string, unknown>>, unknown> =>
   pipe(
     collectJoinValues(mainRecords, joinEntry.on.from),
     Option.liftPredicate((values) => values.length > 0),
     Option.match({
-      onNone: () => Effect.succeed(attachJoinResults(currentResults, joinedTable, joinEntry, [])),
+      onNone: () => Effect.succeed<ReadonlyArray<Record<string, unknown>>>([]),
       onSome: (values) =>
-        Effect.map(
-          sql<Record<string, unknown>>`
-            SELECT * FROM ${sql(joinedTable)}
-            WHERE ${sql(joinEntry.on.to)} IN ${sql.in(values)}
-          `,
-          (joinedRows) => attachJoinResults(currentResults, joinedTable, joinEntry, joinedRows),
-        ),
+        sql<Record<string, unknown>>`
+          SELECT * FROM ${sql(joinedTable)}
+          WHERE ${sql(joinEntry.on.to)} IN ${sql.in(values)}
+        `,
     }),
   )
 
 /**
- * Processes and resolves join configurations for a set of main records, applying transformations
- * according to the provided join rules and leveraging a SQL client for querying related data.
+ * Processes and resolves join configurations for a set of main records.
+ * Fetches all joined data in parallel, then attaches results to main records.
  *
  * @param {SqlClient.SqlClient} sql - The SQL client used to execute queries against the database.
  * @param {ReadonlyArray<Record<string, unknown>>} mainRecords - The primary records for which the join configurations will be applied.
@@ -181,12 +170,24 @@ export const resolveJoins = (
     Option.match({
       onNone: () => Effect.succeed(mainRecords.map((r) => ({ ...r }))),
       onSome: (joinEntries) =>
-        joinEntries.reduce<Effect.Effect<Record<string, unknown>[], unknown>>(
-          (acc, [joinedTable, joinEntry]) =>
-            Effect.flatMap(acc, (currentResults) =>
-              resolveJoinEntry(sql, mainRecords, currentResults, joinedTable, joinEntry),
+        pipe(
+          Effect.all(
+            joinEntries.map(([joinedTable, joinEntry]) =>
+              Effect.map(fetchJoinedRows(sql, mainRecords, joinedTable, joinEntry), (rows) => ({
+                joinedTable,
+                joinEntry,
+                rows,
+              })),
             ),
-          Effect.succeed(mainRecords.map((r) => ({ ...r }))),
+            { concurrency: 'unbounded' },
+          ),
+          Effect.map((fetchResults) =>
+            fetchResults.reduce<Record<string, unknown>[]>(
+              (currentResults, { joinedTable, joinEntry, rows }) =>
+                attachJoinResults(currentResults, joinedTable, joinEntry, rows),
+              mainRecords.map((r) => ({ ...r })),
+            ),
+          ),
         ),
     }),
   )

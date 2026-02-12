@@ -315,12 +315,16 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
     debugLogs: adapterConfig.debugLogs ?? false,
   }
 
+  // This pattern matches better-auth's official Kysely adapter.
+  // `lazyOptions` is set by the returned wrapper before factory(options) is called,
+  // and transaction callbacks only execute after the adapter is initialized.
   let lazyOptions: unknown = null
 
   const factory = createAdapterFactory({
     config: {
       ...baseConfig,
       transaction: <T>(callback: (trx: DBTransactionAdapter) => Promise<T>): Promise<T> => {
+        const capturedOptions = lazyOptions
         const txEffect = Effect.flatMap(SqlClient.SqlClient, (sql) =>
           sql.withTransaction(
             Effect.gen(function* () {
@@ -339,7 +343,7 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
                 config: baseConfig,
                 adapter: createCustomAdapter(txRunner),
               })
-              const txAdapter = txFactory(lazyOptions as Parameters<typeof txFactory>[0])
+              const txAdapter = txFactory(capturedOptions as Parameters<typeof txFactory>[0])
 
               return yield* Effect.promise(() => callback(txAdapter))
             }),
