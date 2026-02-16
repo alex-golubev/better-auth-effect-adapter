@@ -236,11 +236,14 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
               Effect.gen(function* () {
                 const whereClause = yield* requireWhereClause(buildWhereClause(sql, conditions), 'UPDATE')
 
-                const raw = yield* compileAndExecuteRaw(sql, sql`
+                const raw = yield* compileAndExecuteRaw(
+                  sql,
+                  sql`
                   UPDATE ${sql(model)}
                   SET ${sql.update(sqlData)}
                   WHERE ${whereClause}
-                `)
+                `,
+                )
 
                 return getAffectedRows(raw)
               }),
@@ -273,10 +276,13 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
               Effect.gen(function* () {
                 const whereClause = yield* requireWhereClause(buildWhereClause(sql, conditions), 'DELETE')
 
-                const raw = yield* compileAndExecuteRaw(sql, sql`
+                const raw = yield* compileAndExecuteRaw(
+                  sql,
+                  sql`
                   DELETE FROM ${sql(model)}
                   WHERE ${whereClause}
-                `)
+                `,
+                )
 
                 return getAffectedRows(raw)
               }),
