@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.3 (2026-02-16)
+
+### Bug Fixes
+
+- Fix `updateMany` and `deleteMany` bypassing SQL client identifier transforms (e.g. `camelCase → snake_case`) — `.raw` on tagged templates internally calls `compile(withoutTransform=true)`, skipping `transformQueryNames`; now uses `compileAndExecuteRaw` helper that compiles first (preserving transforms), then executes raw via `sql.unsafe` for row count extraction
+
+### Tests
+
+- Add row count tests for `updateMany` and `deleteMany` across all three dialects
+- Add identifier transform tests (`transformQueryNames: camelToSnake`) for `updateMany` and `deleteMany` across all three dialects — these tests fail without the fix (`no such column`)
+
 ## 0.3.2 (2026-02-12)
 
 ### Bug Fixes
