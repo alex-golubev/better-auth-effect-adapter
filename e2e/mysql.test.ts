@@ -1,4 +1,4 @@
-import { describe, beforeAll, afterAll } from 'vitest'
+import { describe, beforeAll, afterAll, it, expect } from 'vitest'
 import { Effect, ManagedRuntime, Redacted } from 'effect'
 import { SqlClient } from '@effect/sql'
 import { MysqlClient } from '@effect/sql-mysql2'
@@ -95,5 +95,158 @@ describe('effectSqlAdapter - MySQL', () => {
   runAdapterTest({
     getAdapter: async (customOptions) => factory(customOptions ?? {}),
     testPrefix: 'MySQL',
+  })
+
+  it('MySQL - updateMany should return correct affected row count', async () => {
+    const adapter = factory({})
+    const now = new Date()
+    const marker = `update-count-${Date.now()}`
+
+    for (let i = 0; i < 3; i++) {
+      await adapter.create({
+        model: 'user',
+        data: {
+          name: marker,
+          email: `${marker}-${i}@test.com`,
+          emailVerified: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      })
+    }
+
+    const count = await adapter.updateMany({
+      model: 'user',
+      where: [{ field: 'name', value: marker, connector: 'AND' }],
+      update: { emailVerified: true },
+    })
+
+    expect(count).toBe(3)
+  })
+
+  it('MySQL - deleteMany should return correct affected row count', async () => {
+    const adapter = factory({})
+    const now = new Date()
+    const marker = `delete-count-${Date.now()}`
+
+    for (let i = 0; i < 3; i++) {
+      await adapter.create({
+        model: 'user',
+        data: {
+          name: marker,
+          email: `${marker}-${i}@test.com`,
+          emailVerified: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      })
+    }
+
+    const count = await adapter.deleteMany({
+      model: 'user',
+      where: [{ field: 'name', value: marker, connector: 'AND' }],
+    })
+
+    expect(count).toBe(3)
+  })
+})
+
+describe('effectSqlAdapter - MySQL (with identifier transforms)', () => {
+  let container: StartedMySqlContainer | undefined
+  let runtime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, unknown> | undefined
+  let factory: ReturnType<typeof effectSqlAdapter>
+
+  const camelToSnake = (str: string) => str.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
+  const snakeToCamel = (str: string) => str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+
+  beforeAll(async () => {
+    container = await new MySqlContainer('mysql:8.0').start()
+
+    const SqlLive = MysqlClient.layer({
+      host: container.getHost(),
+      port: container.getPort(),
+      database: container.getDatabase(),
+      username: container.getUsername(),
+      password: Redacted.make(container.getUserPassword()),
+      transformQueryNames: camelToSnake,
+      transformResultNames: snakeToCamel,
+    })
+
+    runtime = ManagedRuntime.make(SqlLive)
+
+    await runtime.runPromise(
+      Effect.flatMap(SqlClient.SqlClient, (sql) =>
+        sql.unsafe(`
+          CREATE TABLE IF NOT EXISTS user (
+            id VARCHAR(255) PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            email VARCHAR(255) UNIQUE,
+            email_verified INTEGER NOT NULL DEFAULT 0,
+            created_at VARCHAR(255) NOT NULL,
+            updated_at VARCHAR(255) NOT NULL
+          )
+        `),
+      ),
+    )
+
+    factory = effectSqlAdapter({ runtime, dialect: 'mysql' })
+  }, 60_000)
+
+  afterAll(async () => {
+    await runtime?.dispose()
+    await container?.stop()
+  })
+
+  it('updateMany should preserve identifier transforms', async () => {
+    const adapter = factory({})
+    const now = new Date()
+    const marker = `transform-update-${Date.now()}`
+
+    for (let i = 0; i < 2; i++) {
+      await adapter.create({
+        model: 'user',
+        data: {
+          name: marker,
+          email: `${marker}-${i}@test.com`,
+          emailVerified: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      })
+    }
+
+    const count = await adapter.updateMany({
+      model: 'user',
+      where: [{ field: 'name', value: marker, connector: 'AND' }],
+      update: { emailVerified: true },
+    })
+
+    expect(count).toBe(2)
+  })
+
+  it('deleteMany should preserve identifier transforms', async () => {
+    const adapter = factory({})
+    const now = new Date()
+    const marker = `transform-delete-${Date.now()}`
+
+    for (let i = 0; i < 3; i++) {
+      await adapter.create({
+        model: 'user',
+        data: {
+          name: marker,
+          email: `${marker}-${i}@test.com`,
+          emailVerified: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      })
+    }
+
+    const count = await adapter.deleteMany({
+      model: 'user',
+      where: [{ field: 'name', value: marker, connector: 'AND' }],
+    })
+
+    expect(count).toBe(3)
   })
 })

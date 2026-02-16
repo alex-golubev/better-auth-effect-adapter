@@ -146,4 +146,146 @@ describe('effectSqlAdapter - SQLite', () => {
 
     expect(results.some((row) => row.email === testEmail)).toBe(true)
   })
+
+  it('SQLite - updateMany should return correct affected row count', async () => {
+    const adapter = factory({})
+    const now = new Date()
+    const marker = `update-count-${Date.now()}`
+
+    for (let i = 0; i < 3; i++) {
+      await adapter.create({
+        model: 'user',
+        data: {
+          name: marker,
+          email: `${marker}-${i}@test.com`,
+          emailVerified: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      })
+    }
+
+    const count = await adapter.updateMany({
+      model: 'user',
+      where: [{ field: 'name', value: marker, connector: 'AND' }],
+      update: { emailVerified: true },
+    })
+
+    expect(count).toBe(3)
+  })
+
+  it('SQLite - deleteMany should return correct affected row count', async () => {
+    const adapter = factory({})
+    const now = new Date()
+    const marker = `delete-count-${Date.now()}`
+
+    for (let i = 0; i < 3; i++) {
+      await adapter.create({
+        model: 'user',
+        data: {
+          name: marker,
+          email: `${marker}-${i}@test.com`,
+          emailVerified: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      })
+    }
+
+    const count = await adapter.deleteMany({
+      model: 'user',
+      where: [{ field: 'name', value: marker, connector: 'AND' }],
+    })
+
+    expect(count).toBe(3)
+  })
+})
+
+describe('effectSqlAdapter - SQLite (with identifier transforms)', () => {
+  const camelToSnake = (str: string) => str.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
+  const snakeToCamel = (str: string) => str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+
+  const SqliteLive = SqliteClient.layer({
+    filename: ':memory:',
+    transformQueryNames: camelToSnake,
+    transformResultNames: snakeToCamel,
+  })
+  const runtime = ManagedRuntime.make(SqliteLive)
+
+  beforeAll(async () => {
+    // Use sql.unsafe for DDL to avoid identifier transforms on column definitions
+    await runtime.runPromise(
+      Effect.flatMap(SqlClient.SqlClient, (sql) =>
+        sql.unsafe(`
+          CREATE TABLE IF NOT EXISTS user (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE,
+            email_verified INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `),
+      ),
+    )
+  })
+
+  afterAll(async () => {
+    await runtime.dispose()
+  })
+
+  const factory = effectSqlAdapter({ runtime, dialect: 'sqlite' })
+
+  it('updateMany should preserve identifier transforms', async () => {
+    const adapter = factory({})
+    const now = new Date()
+    const marker = `transform-update-${Date.now()}`
+
+    for (let i = 0; i < 2; i++) {
+      await adapter.create({
+        model: 'user',
+        data: {
+          name: marker,
+          email: `${marker}-${i}@test.com`,
+          emailVerified: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      })
+    }
+
+    const count = await adapter.updateMany({
+      model: 'user',
+      where: [{ field: 'name', value: marker, connector: 'AND' }],
+      update: { emailVerified: true },
+    })
+
+    expect(count).toBe(2)
+  })
+
+  it('deleteMany should preserve identifier transforms', async () => {
+    const adapter = factory({})
+    const now = new Date()
+    const marker = `transform-delete-${Date.now()}`
+
+    for (let i = 0; i < 3; i++) {
+      await adapter.create({
+        model: 'user',
+        data: {
+          name: marker,
+          email: `${marker}-${i}@test.com`,
+          emailVerified: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      })
+    }
+
+    const count = await adapter.deleteMany({
+      model: 'user',
+      where: [{ field: 'name', value: marker, connector: 'AND' }],
+    })
+
+    expect(count).toBe(3)
+  })
 })
