@@ -1,5 +1,6 @@
 import { Effect, Option, pipe, Runtime } from 'effect'
 import { SqlClient } from '@effect/sql'
+import type { Statement } from '@effect/sql'
 import { createAdapterFactory, type Where, type JoinConfig } from 'better-auth/adapters'
 import type { DBTransactionAdapter } from 'better-auth/types'
 import type { WhereCondition } from './where-builder.js'
@@ -56,6 +57,15 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
       const withSql = <A>(
         fn: (sql: SqlClient.SqlClient) => Effect.Effect<A, unknown, never>,
       ): Effect.Effect<A, unknown, SqlClient.SqlClient> => Effect.flatMap(SqlClient.SqlClient, fn)
+
+      // `.raw` on tagged templates internally calls `compile(withoutTransform=true)`,
+      // which skips identifier transforms (e.g. camelCase → snake_case).
+      // This helper compiles first (preserving transforms), then executes raw
+      // via `sql.unsafe` to get the driver-native result for row count extraction.
+      const compileAndExecuteRaw = (sql: SqlClient.SqlClient, stmt: Statement.Statement<unknown>) => {
+        const [query, params] = stmt.compile()
+        return sql.unsafe(query, params).raw
+      }
 
       return {
         create: async <T extends Record<string, unknown>>({
@@ -226,11 +236,11 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
               Effect.gen(function* () {
                 const whereClause = yield* requireWhereClause(buildWhereClause(sql, conditions), 'UPDATE')
 
-                const raw = yield* sql`
+                const raw = yield* compileAndExecuteRaw(sql, sql`
                   UPDATE ${sql(model)}
                   SET ${sql.update(sqlData)}
                   WHERE ${whereClause}
-                `.raw
+                `)
 
                 return getAffectedRows(raw)
               }),
@@ -263,10 +273,10 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
               Effect.gen(function* () {
                 const whereClause = yield* requireWhereClause(buildWhereClause(sql, conditions), 'DELETE')
 
-                const raw = yield* sql`
+                const raw = yield* compileAndExecuteRaw(sql, sql`
                   DELETE FROM ${sql(model)}
                   WHERE ${whereClause}
-                `.raw
+                `)
 
                 return getAffectedRows(raw)
               }),
