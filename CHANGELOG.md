@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 (2026-03-04)
+
+### Breaking Changes
+
+- **Replace `ManagedRuntime` with `Runtime` in adapter config** — `effectSqlAdapter()` now accepts `Runtime.Runtime<R>` instead of `ManagedRuntime.ManagedRuntime<R, E>`. Obtain a `Runtime` via `Effect.runtime<SqlClient.SqlClient>()` inside a Layer, or from `await ManagedRuntime.make(layer).runtime()`.
+- Remove unused generic parameter `E` from `EffectSqlAdapterConfig<R, E>` → `EffectSqlAdapterConfig<R>`
+
+### Documentation
+
+- Update README usage example to Next.js App Router with Effect Layers
+- Update Configuration section to reflect `Runtime` API
+
 ## 0.3.3 (2026-02-16)
 
 ### Bug Fixes

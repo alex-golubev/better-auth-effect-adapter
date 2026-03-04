@@ -1,4 +1,4 @@
-import type { ManagedRuntime } from 'effect'
+import type { Runtime } from 'effect'
 import type { SqlClient } from '@effect/sql'
 import type { Fragment } from '@effect/sql/Statement'
 
@@ -20,17 +20,18 @@ export type SqlData = Record<string, Primitive | Fragment | undefined>
  * Configuration for the Effect SQL adapter.
  *
  * @template R - The environment type provided by the runtime (must include SqlClient.SqlClient)
- * @template E - The error type of the runtime (typically `never` after initialization)
  */
-export interface EffectSqlAdapterConfig<R extends SqlClient.SqlClient = SqlClient.SqlClient, E = unknown> {
+export interface EffectSqlAdapterConfig<R extends SqlClient.SqlClient = SqlClient.SqlClient> {
   /**
-   * ManagedRuntime that provides SqlClient.
-   * Create this with ManagedRuntime.make(YourSqlLayer)
+   * Runtime that provides SqlClient.
+   *
+   * Can be obtained via `Effect.runtime<SqlClient.SqlClient>()` inside a Layer
+   * (for single-pool sharing), or from `await ManagedRuntime.make(layer).runtime()`.
    *
    * The runtime must provide at least SqlClient.SqlClient in its environment.
    * It can provide additional services (e.g., PgClient).
    */
-  runtime: ManagedRuntime.ManagedRuntime<R, E>
+  runtime: Runtime.Runtime<R>
 
   /**
    * Database dialect for handling SQL differences (e.g., RETURNING clause).

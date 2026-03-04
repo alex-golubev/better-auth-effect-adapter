@@ -8,7 +8,7 @@ import { effectSqlAdapter } from '../src'
 
 describe('effectSqlAdapter - PostgreSQL', () => {
   let container: StartedPostgreSqlContainer | undefined
-  let runtime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, unknown> | undefined
+  let managedRuntime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, unknown> | undefined
   let factory: ReturnType<typeof effectSqlAdapter>
 
   beforeAll(async () => {
@@ -22,9 +22,9 @@ describe('effectSqlAdapter - PostgreSQL', () => {
       password: Redacted.make(container.getPassword()),
     })
 
-    runtime = ManagedRuntime.make(SqlLive)
+    managedRuntime = ManagedRuntime.make(SqlLive)
 
-    await runtime.runPromise(
+    await managedRuntime.runPromise(
       Effect.flatMap(SqlClient.SqlClient, (sql) =>
         Effect.all([
           sql`
@@ -84,11 +84,11 @@ describe('effectSqlAdapter - PostgreSQL', () => {
       ),
     )
 
-    factory = effectSqlAdapter({ runtime, dialect: 'pg' })
+    factory = effectSqlAdapter({ runtime: await managedRuntime.runtime(), dialect: 'pg' })
   }, 60_000)
 
   afterAll(async () => {
-    await runtime?.dispose()
+    await managedRuntime?.dispose()
     await container?.stop()
   })
 
@@ -153,7 +153,7 @@ describe('effectSqlAdapter - PostgreSQL', () => {
 
 describe('effectSqlAdapter - PostgreSQL (with identifier transforms)', () => {
   let container: StartedPostgreSqlContainer | undefined
-  let runtime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, unknown> | undefined
+  let managedRuntime: ManagedRuntime.ManagedRuntime<SqlClient.SqlClient, unknown> | undefined
   let factory: ReturnType<typeof effectSqlAdapter>
 
   const camelToSnake = (str: string) => str.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)
@@ -172,9 +172,9 @@ describe('effectSqlAdapter - PostgreSQL (with identifier transforms)', () => {
       transformResultNames: snakeToCamel,
     })
 
-    runtime = ManagedRuntime.make(SqlLive)
+    managedRuntime = ManagedRuntime.make(SqlLive)
 
-    await runtime.runPromise(
+    await managedRuntime.runPromise(
       Effect.flatMap(SqlClient.SqlClient, (sql) =>
         sql.unsafe(`
           CREATE TABLE IF NOT EXISTS "user" (
@@ -189,11 +189,11 @@ describe('effectSqlAdapter - PostgreSQL (with identifier transforms)', () => {
       ),
     )
 
-    factory = effectSqlAdapter({ runtime, dialect: 'pg' })
+    factory = effectSqlAdapter({ runtime: await managedRuntime.runtime(), dialect: 'pg' })
   }, 60_000)
 
   afterAll(async () => {
-    await runtime?.dispose()
+    await managedRuntime?.dispose()
     await container?.stop()
   })
 

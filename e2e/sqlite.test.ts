@@ -7,10 +7,11 @@ import { effectSqlAdapter } from '../src'
 
 describe('effectSqlAdapter - SQLite', () => {
   const SqliteLive = SqliteClient.layer({ filename: ':memory:' })
-  const runtime = ManagedRuntime.make(SqliteLive)
+  const managedRuntime = ManagedRuntime.make(SqliteLive)
+  let factory: ReturnType<typeof effectSqlAdapter>
 
   beforeAll(async () => {
-    await runtime.runPromise(
+    await managedRuntime.runPromise(
       Effect.flatMap(SqlClient.SqlClient, (sql) =>
         Effect.all([
           sql`
@@ -69,13 +70,13 @@ describe('effectSqlAdapter - SQLite', () => {
         ]),
       ),
     )
+
+    factory = effectSqlAdapter({ runtime: await managedRuntime.runtime(), dialect: 'sqlite' })
   })
 
   afterAll(async () => {
-    await runtime.dispose()
+    await managedRuntime.dispose()
   })
-
-  const factory = effectSqlAdapter({ runtime, dialect: 'sqlite' })
 
   runAdapterTest({
     getAdapter: async (customOptions) => factory(customOptions ?? {}),
@@ -210,11 +211,12 @@ describe('effectSqlAdapter - SQLite (with identifier transforms)', () => {
     transformQueryNames: camelToSnake,
     transformResultNames: snakeToCamel,
   })
-  const runtime = ManagedRuntime.make(SqliteLive)
+  const managedRuntime = ManagedRuntime.make(SqliteLive)
+  let factory: ReturnType<typeof effectSqlAdapter>
 
   beforeAll(async () => {
     // Use sql.unsafe for DDL to avoid identifier transforms on column definitions
-    await runtime.runPromise(
+    await managedRuntime.runPromise(
       Effect.flatMap(SqlClient.SqlClient, (sql) =>
         sql.unsafe(`
           CREATE TABLE IF NOT EXISTS user (
@@ -228,13 +230,13 @@ describe('effectSqlAdapter - SQLite (with identifier transforms)', () => {
         `),
       ),
     )
+
+    factory = effectSqlAdapter({ runtime: await managedRuntime.runtime(), dialect: 'sqlite' })
   })
 
   afterAll(async () => {
-    await runtime.dispose()
+    await managedRuntime.dispose()
   })
-
-  const factory = effectSqlAdapter({ runtime, dialect: 'sqlite' })
 
   it('updateMany should preserve identifier transforms', async () => {
     const adapter = factory({})

@@ -33,36 +33,35 @@ npm install @effect/sql-sqlite-node
 
 ## Usage
 
+### Next.js App Router with Effect Layers
+
 ```typescript
-import { ManagedRuntime } from "effect"
+// lib/auth.ts
+import { Effect, Layer } from "effect"
+import { SqlClient } from "@effect/sql"
 import { PgClient } from "@effect/sql-pg"
+import { HttpApp } from "@effect/platform"
 import { effectSqlAdapter } from "better-auth-effect"
 import { betterAuth } from "better-auth"
 
-// 1. Create your database Layer
-const SqlLive = PgClient.layer({
-  url: "postgresql://postgres:password@localhost:5432/myapp"
+const DatabaseLive = PgClient.layer({
+  url: "postgresql://postgres:password@localhost:5432/myapp",
 })
 
-// Or with individual options:
-// const SqlLive = PgClient.layer({
-//   host: "localhost",
-//   database: "myapp",
-//   username: "postgres",
-//   password: "password",
-// })
+const AuthLive = Layer.scoped(Auth, Effect.gen(function* () {
+  const rt = yield* Effect.runtime<SqlClient.SqlClient>()
+  return betterAuth({
+    database: effectSqlAdapter({ runtime: rt, dialect: "pg" }),
+  })
+})).pipe(Layer.provide(DatabaseLive))
 
-// 2. Create a ManagedRuntime
-const runtime = ManagedRuntime.make(SqlLive)
+const AuthAppLayer = Layer.mergeAll(AuthLive, DatabaseLive)
 
-// 3. Use the adapter with Better Auth
-export const auth = betterAuth({
-  database: effectSqlAdapter({
-    runtime,
-    dialect: "pg",
-  }),
-  // ... other Better Auth options
-})
+const { handler } = HttpApp.toWebHandlerLayer(authHttpApp, AuthAppLayer)
+
+// app/api/auth/[...all]/route.ts
+export const GET = (request: Request) => handler(request)
+export const POST = (request: Request) => handler(request)
 ```
 
 ## Configuration
@@ -70,10 +69,11 @@ export const auth = betterAuth({
 ```typescript
 interface EffectSqlAdapterConfig {
   /**
-   * ManagedRuntime that provides SqlClient.
-   * Create with ManagedRuntime.make(YourSqlLayer)
+   * Runtime that provides SqlClient.
+   * Obtain via Effect.runtime<SqlClient>() inside a Layer,
+   * or from await ManagedRuntime.make(layer).runtime().
    */
-  runtime: ManagedRuntime.ManagedRuntime<SqlClient, never>
+  runtime: Runtime.Runtime<SqlClient>
 
   /**
    * Database dialect for SQL differences (RETURNING clause, etc.)
@@ -91,35 +91,9 @@ interface EffectSqlAdapterConfig {
 }
 ```
 
-## Why ManagedRuntime?
+## Why Runtime?
 
-Using `ManagedRuntime` allows you to share the same connection pool between Better Auth and your Effect application code:
-
-```typescript
-import { Effect, ManagedRuntime } from "effect"
-import { SqlClient } from "@effect/sql"
-import { PgClient } from "@effect/sql-pg"
-
-// Single Layer for your entire app
-const SqlLive = PgClient.layer({ database: "myapp" })
-
-// Single Runtime - shared connection pool
-const runtime = ManagedRuntime.make(SqlLive)
-
-// Better Auth uses the same pool
-const auth = betterAuth({
-  database: effectSqlAdapter({ runtime, dialect: "pg" }),
-})
-
-// Your app code uses the same pool
-const getUsers = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient
-  return yield* sql`SELECT * FROM users`
-})
-
-// Run with the same runtime
-runtime.runPromise(getUsers)
-```
+The adapter accepts an Effect `Runtime` — a lightweight handle that carries the environment (connection pool, services) needed to run effects. By obtaining the `Runtime` inside a Layer, you naturally share the same connection pool between Better Auth and your Effect application code without managing lifecycle manually.
 
 ## Database Support
 

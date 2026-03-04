@@ -1,5 +1,4 @@
-import type { ManagedRuntime } from 'effect'
-import { Data, Effect, Option, pipe } from 'effect'
+import { Data, Effect, Option, pipe, Runtime } from 'effect'
 import type { SqlClient } from '@effect/sql'
 import type { SqlError } from '@effect/sql/SqlError'
 
@@ -131,18 +130,18 @@ export const mapSqlError = (error: unknown): BetterAuthAdapterError =>
   )
 
 /**
- * Executes a given effect within a managed runtime environment tailored for SQL client operations.
+ * Executes a given effect within a runtime environment tailored for SQL client operations.
  *
  * @template A The type of the value produced by the effect when successfully executed.
  * @template R The environment type (must include SqlClient.SqlClient).
  * @param effect The effect to be executed.
- * @param runtime The managed runtime that provides the context for executing the effect.
+ * @param runtime The runtime that provides the context for executing the effect.
  * @returns A promise that resolves with the result of the effect when successful.
  */
 export const runAdapterEffect = <A, R extends SqlClient.SqlClient>(
   effect: Effect.Effect<A, unknown, SqlClient.SqlClient>,
-  runtime: ManagedRuntime.ManagedRuntime<R, unknown>,
+  runtime: Runtime.Runtime<R>,
 ): Promise<A> =>
-  runtime.runPromise(
+  Runtime.runPromise(runtime)(
     effect.pipe(Effect.catchAll((error) => Effect.die(mapSqlError(error)))) as Effect.Effect<A, never, R>,
   )

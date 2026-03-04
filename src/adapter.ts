@@ -43,13 +43,13 @@ type EffectRunner = <A>(effect: Effect.Effect<A, unknown, SqlClient.SqlClient>) 
  * @template E - The error type of the runtime
  * @param {EffectSqlAdapterConfig<R, E>} adapterConfig - Configuration for the SQL adapter, including runtime and dialect settings.
  */
-export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlClient, E = unknown>(
-  adapterConfig: EffectSqlAdapterConfig<R, E>,
+export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlClient>(
+  adapterConfig: EffectSqlAdapterConfig<R>,
 ) => {
-  const { runtime, dialect } = adapterConfig
+  const { dialect } = adapterConfig
   const returningStrategy = getReturningStrategy(dialect)
 
-  const defaultRunner: EffectRunner = (effect) => runAdapterEffect(effect, runtime)
+  const defaultRunner: EffectRunner = (effect) => runAdapterEffect(effect, adapterConfig.runtime)
 
   const createCustomAdapter =
     (runEffect: EffectRunner) =>
@@ -366,7 +366,7 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
           ),
         )
 
-        return runAdapterEffect(txEffect, runtime)
+        return runAdapterEffect(txEffect, adapterConfig.runtime)
       },
     },
     adapter: createCustomAdapter(defaultRunner),
