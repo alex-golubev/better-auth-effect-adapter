@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1 (2026-03-05)
+
+### Bug Fixes
+
+- Allow `deleteMany` with empty WHERE clause (required by `testAdapter` cleanup to delete all rows from a table)
+
+### Tests
+
+- Rewrite all e2e tests (SQLite, PostgreSQL, MySQL) using `testAdapter` and a shared `createTestSuite`-based test suite with 31 adapter test cases
+- Add smoke tests (`e2e/smoke.test.ts`) that run through the full `betterAuth()` stack — signUp, signIn, getSession — to catch API contract changes between better-auth versions
+- Identifier transform tests (camelToSnake/snakeToCamel) preserved as standalone vitest blocks
+
 ## 0.4.0 (2026-03-04)
 
 ### Breaking Changes

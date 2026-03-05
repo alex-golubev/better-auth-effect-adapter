@@ -274,14 +274,11 @@ export const effectSqlAdapter = <R extends SqlClient.SqlClient = SqlClient.SqlCl
           return runEffect(
             withSql((sql) =>
               Effect.gen(function* () {
-                const whereClause = yield* requireWhereClause(buildWhereClause(sql, conditions), 'DELETE')
+                const whereClause = buildWhereClause(sql, conditions)
 
                 const raw = yield* compileAndExecuteRaw(
                   sql,
-                  sql`
-                  DELETE FROM ${sql(model)}
-                  WHERE ${whereClause}
-                `,
+                  whereClause ? sql`DELETE FROM ${sql(model)} WHERE ${whereClause}` : sql`DELETE FROM ${sql(model)}`,
                 )
 
                 return getAffectedRows(raw)

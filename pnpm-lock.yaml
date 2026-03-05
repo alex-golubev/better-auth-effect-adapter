@@ -11,6 +11,9 @@ importers:
 
   .:
     devDependencies:
+      '@better-auth/test-utils':
+        specifier: ^1.5.3
+        version: 1.5.3(@better-auth/core@1.5.3(@better-auth/utils@0.3.1)(@better-fetch/fetch@1.1.21)(better-call@1.3.2(zod@4.3.6))(jose@6.1.3)(kysely@0.28.11)(nanostores@1.1.1))(better-auth@1.5.3(better-sqlite3@12.6.2)(mysql2@3.18.2(@types/node@25.3.3))(pg@8.19.0)(vitest@4.0.18(@types/node@25.3.3)(yaml@2.8.2)))(vitest@4.0.18(@types/node@25.3.3)(yaml@2.8.2))
       '@effect/experimental':
         specifier: 0.58.0
         version: 0.58.0(@effect/platform@0.94.4(effect@3.19.19))(effect@3.19.19)
@@ -114,6 +117,13 @@ packages:
     resolution: {integrity: sha512-ZX/r8AsWdB6BwH+Rb7H/SyJnGtPN6EDWrNxBQEDsqRrBJVcDLwAIz165P57RXci0WwtY872T0guKq+XVyy5rkA==}
     peerDependencies:
       '@better-auth/core': 1.5.3
+
+  '@better-auth/test-utils@1.5.3':
+    resolution: {integrity: sha512-etblWEUwqqF5GFeqJxagDOdlojuIN3676lCc2vqnX28+DVRYEbg+izDNarHkJ9igtP3nUfanrHZ/iESeatfrAg==}
+    peerDependencies:
+      '@better-auth/core': 1.5.3
+      better-auth: 1.5.3
+      vitest: ^4.0.18
 
   '@better-auth/utils@0.3.1':
     resolution: {integrity: sha512-+CGp4UmZSUrHHnpHhLPYu6cV+wSUSvVbZbNykxhUDocpVNTo9uFFxw/NqJlh1iC4wQ9HKKWGCKuZ5wUgS0v6Kg==}
@@ -2157,6 +2167,12 @@ snapshots:
       '@better-auth/core': 1.5.3(@better-auth/utils@0.3.1)(@better-fetch/fetch@1.1.21)(better-call@1.3.2(zod@4.3.6))(jose@6.1.3)(kysely@0.28.11)(nanostores@1.1.1)
       '@better-auth/utils': 0.3.1
       '@better-fetch/fetch': 1.1.21
+
+  '@better-auth/test-utils@1.5.3(@better-auth/core@1.5.3(@better-auth/utils@0.3.1)(@better-fetch/fetch@1.1.21)(better-call@1.3.2(zod@4.3.6))(jose@6.1.3)(kysely@0.28.11)(nanostores@1.1.1))(better-auth@1.5.3(better-sqlite3@12.6.2)(mysql2@3.18.2(@types/node@25.3.3))(pg@8.19.0)(vitest@4.0.18(@types/node@25.3.3)(yaml@2.8.2)))(vitest@4.0.18(@types/node@25.3.3)(yaml@2.8.2))':
+    dependencies:
+      '@better-auth/core': 1.5.3(@better-auth/utils@0.3.1)(@better-fetch/fetch@1.1.21)(better-call@1.3.2(zod@4.3.6))(jose@6.1.3)(kysely@0.28.11)(nanostores@1.1.1)
+      better-auth: 1.5.3(better-sqlite3@12.6.2)(mysql2@3.18.2(@types/node@25.3.3))(pg@8.19.0)(vitest@4.0.18(@types/node@25.3.3)(yaml@2.8.2))
+      vitest: 4.0.18(@types/node@25.3.3)(yaml@2.8.2)
 
   '@better-auth/utils@0.3.1': {}
 
