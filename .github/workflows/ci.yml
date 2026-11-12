@@ -8,43 +8,32 @@ on:
   workflow_dispatch:
 
 jobs:
-  ci:
+  check:
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
-        node-version: [20, 22, 24]
-
+        node-version: [22, 24, 26]
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
-
       - run: pnpm install --frozen-lockfile
-
       - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm format:check
+      - run: pnpm biome ci .
       - run: pnpm test
+      - run: pnpm build
 
   integration:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
-
       - run: pnpm install --frozen-lockfile
-
       - run: pnpm test:integration

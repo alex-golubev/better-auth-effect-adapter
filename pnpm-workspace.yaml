@@ -1,17 +1,5 @@
-onlyBuiltDependencies:
-  - '-'
-  - '3'
-  - b
-  - better-sqlite3
+# testcontainers' transitive deps ship optional install scripts we don't need.
+ignoredBuiltDependencies:
   - cpu-features
-  - e
-  - esbuild
-  - i
-  - l
-  - msgpackr-extract
   - protobufjs
-  - q
-  - r
-  - s
   - ssh2
-  - t
