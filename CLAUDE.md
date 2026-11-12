@@ -27,7 +27,8 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 ## Code style
 
 - **Write functional, declarative Effect code.** Imperative code is not acceptable in `src/` or `test/`:
-  - Don't use `throw`, `try`/`catch`, `Effect.try` around throwing code, `let`, loops (`for`/`while`), `switch`, mutation (`push`/`splice`/assignment), or `if` statements.
+  - Don't use `throw`, `try`/`catch`, `let`, loops (`for`/`while`), `switch`, mutation (`push`/`splice`/assignment), or `if` statements.
+  - `Effect.try` is allowed only to wrap third-party code that throws (for example better-auth's `getFieldName`), mapping the failure to a typed error. Never use it around our own code; make our code fail as a value instead.
   - Errors are values. Fail with typed errors (`Effect.fail`, `Effect.filterOrFail`, `Effect.fromOption` + `mapError`), and keep the error type in the signature.
   - Use `Option` instead of null/undefined checks.
   - Branch on a dialect (or another closed set) with lookup tables like `Record<Dialect, …>`. Use `Match` for multi-way branching on values or types. Ternaries are fine for simple two-way expressions.
