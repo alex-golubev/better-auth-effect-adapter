@@ -26,6 +26,15 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 
 ## Code style
 
+- **Write functional, declarative Effect code.** Imperative code is not acceptable in `src/` or `test/`:
+  - Don't use `throw`, `try`/`catch`, `Effect.try` around throwing code, `let`, loops (`for`/`while`), `switch`, mutation (`push`/`splice`/assignment), or `if` statements.
+  - Errors are values. Fail with typed errors (`Effect.fail`, `Effect.filterOrFail`, `Effect.fromOption` + `mapError`), and keep the error type in the signature.
+  - Use `Option` instead of null/undefined checks.
+  - Branch on a dialect (or another closed set) with lookup tables like `Record<Dialect, …>`. Use `Match` for multi-way branching on values or types. Ternaries are fine for simple two-way expressions.
+  - Use `effect`'s `Array`/`Option`/`Order`/`Predicate` and `pipe`. Use `Effect.forEach`/`Effect.all` instead of looping with `yield*`.
+  - Escape hatches exist only at the boundaries:
+    - better-auth's Promise interface: run effects with `Effect.runPromiseWith`;
+    - the synchronous `fromContext`: `Effect.runSync` on top of the Effect-based `make`.
 - Biome (`biome.json`): 2-space indent, 120 columns, single quotes, no semicolons, trailing commas.
 - Use `import type` for type-only imports.
 - Unused variables are errors.
@@ -41,4 +50,7 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 - In better-auth 1.7, `select` and `sortBy` arrive as logical names; map them with `getFieldName({ model: modelKey, field })`. `in`/`not_in` arrays are never value-converted by the factory.
 - Inside an app transaction, adapter calls must run on the caller's context via the ALS bridge. On the root context they deadlock on SQLite and escape the transaction on PG/MySQL. This is GitHub issue #4.
 - MySQL: `LIMIT` and `OFFSET` go through `sql.literal`. There is no `RETURNING`; emulate it inside a transaction.
+- `effect/sql` and the `@effect/sql-*` drivers are marked `@stability unstable`, so they may break between minor versions. They are allow-listed in `tsconfig.json` (`allowedUnstableApis`).
+- `@effect/sql-pg` caches prepared statements per connection by SQL text (`prepare: true` by default). If a table is recreated with different column types on a live pool, the cached parameter types go stale (`operator does not exist: uuid = text`). The test harness uses `prepare: false` for this reason.
+- The DDL generator (`src/schema.ts`) is also what integration tests use to build schemas. `test/harness.ts` → `resetSchema(options)` drops all tables and recreates them.
 - SQLite (`node:sqlite`): `Date` and plain objects can't be bound as parameters.
