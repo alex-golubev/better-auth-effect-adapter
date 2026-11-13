@@ -1,6 +1,6 @@
 {
   "name": "better-auth-effect",
-  "version": "1.0.0-alpha.0",
+  "version": "1.0.0",
   "description": "Better Auth database adapter for Effect SQL (effect/sql)",
   "author": "Alex Golubev",
   "license": "MIT",
