@@ -2,14 +2,17 @@
  * GitHub issue #4: better-auth calls inside an app's `sql.withTransaction` froze on SQLite
  * (the adapter waited for the connection the transaction held) and escaped the transaction
  * on pooled databases. `EffectSqlAdapter.run` / `bind` carry the transaction to the adapter.
+ * On PostgreSQL and MySQL the rollback tests are the ones that catch the escape.
  */
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { type BetterAuthOptions, betterAuth } from 'better-auth'
 import { Effect, Exit, ManagedRuntime } from 'effect'
 import { SqlClient } from 'effect/sql'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { bind, fromContext, run } from '../src/adapter'
-import { sqliteDatabase, type TestDatabase } from './harness'
+import { type Dialect, dialectProfiles } from '../src/dialect'
+import { toSqlValue } from '../src/where'
+import { mysqlDatabase, postgresDatabase, sqliteDatabase, type TestDatabase } from './harness'
 
 const options = {
   baseURL: 'http://localhost:3000',
@@ -31,9 +34,9 @@ const rowsIn = (table: string, where: { readonly column: string; readonly value:
     ),
   )
 
-const appWrite = (identifier: string) =>
+const appWrite = (dialect: Dialect, identifier: string) =>
   Effect.flatMap(SqlClient.SqlClient, (sql) => {
-    const now = new Date().toISOString()
+    const now = toSqlValue(dialectProfiles[dialect])(new Date())
     return sql`INSERT INTO ${sql('verification')} ${sql.insert({
       id: identifier,
       identifier,
@@ -44,22 +47,18 @@ const appWrite = (identifier: string) =>
     })}`
   })
 
-describe('issue #4: auth calls inside an app transaction (SQLite)', () => {
-  let db: TestDatabase
-  let auth: ReturnType<typeof makeAuth>
+const databases: ReadonlyArray<TestDatabase> = await Promise.all([
+  sqliteDatabase(),
+  postgresDatabase(),
+  mysqlDatabase(),
+])
 
-  beforeAll(async () => {
-    db = await sqliteDatabase()
-    auth = makeAuth(db)
-  })
+afterAll(() => Promise.all(databases.map((db) => db.dispose())))
 
-  beforeEach(async () => {
-    await db.resetSchema(options)
-  })
+describe.each(databases)('issue #4: auth calls inside an app transaction ($dialect)', (db) => {
+  const auth = makeAuth(db)
 
-  afterAll(async () => {
-    await db?.dispose()
-  })
+  beforeEach(() => db.resetSchema(options))
 
   /** Fails fast instead of hanging if the deadlock ever comes back. */
   const inAppTransaction = <A, E>(body: Effect.Effect<A, E, SqlClient.SqlClient>) =>
@@ -76,7 +75,7 @@ describe('issue #4: auth calls inside an app transaction (SQLite)', () => {
     const email = 'commit@example.com'
     const exit = await inAppTransaction(
       Effect.gen(function* () {
-        yield* appWrite('app-commit')
+        yield* appWrite(db.dialect, 'app-commit')
         yield* run(() => auth.api.signUpEmail({ body: signUpBody(email) }))
         return yield* rowsIn('user', { column: 'email', value: email })
       }),
@@ -90,7 +89,7 @@ describe('issue #4: auth calls inside an app transaction (SQLite)', () => {
     const email = 'rollback@example.com'
     const exit = await inAppTransaction(
       Effect.gen(function* () {
-        yield* appWrite('app-rollback')
+        yield* appWrite(db.dialect, 'app-rollback')
         const { user } = yield* run(() => auth.api.signUpEmail({ body: signUpBody(email) }))
         return yield* Effect.fail({ reason: 'app failure', userId: user.id })
       }),

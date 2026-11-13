@@ -88,18 +88,52 @@ const fromLayer = async (
 export const sqliteDatabase = (): Promise<TestDatabase> =>
   fromLayer('sqlite', SqliteClient.layer({ filename: ':memory:' }))
 
-export const postgresDatabase = async (): Promise<TestDatabase> => {
+export interface DatabaseOptions {
+  readonly maxConnections?: number
+  /**
+   * Server-side prepared statements, on by default as in both drivers. Turn them off for
+   * tests that recreate tables with different column types (text/integer/uuid ids) on one
+   * pool: the drivers cache statements per connection by SQL text, and a cached statement
+   * outlives the table it was prepared for. PostgreSQL then fails with "operator does not
+   * exist: uuid = text"; MySQL 8.4 uses stale column types, so inserts fail ("Data too long")
+   * and reads compare as numbers and silently match nothing, on whichever pooled connection
+   * still holds the old statement.
+   */
+  readonly preparedStatements?: boolean
+}
+
+const maxConnectionsOption = (maxConnections: number | undefined) =>
+  maxConnections === undefined ? {} : { maxConnections }
+
+export const postgresDatabase = async ({
+  maxConnections,
+  preparedStatements = true,
+}: DatabaseOptions = {}): Promise<TestDatabase> => {
   const container = await new PostgreSqlContainer('postgres:17-alpine').start()
-  // The driver caches prepared statements per connection by SQL text. Tests recreate
-  // tables with different column types (text/integer/uuid ids) on the same pool, which
-  // would leave stale parameter types in that cache ("operator does not exist: uuid = text").
-  const layer = PgClient.layer({ url: Redacted.make(container.getConnectionUri()), prepare: false })
+  const layer = PgClient.layer({
+    url: Redacted.make(container.getConnectionUri()),
+    prepare: preparedStatements,
+    ...maxConnectionsOption(maxConnections),
+  })
   return fromLayer('pg', layer, () => container.stop())
 }
 
-export const mysqlDatabase = async (): Promise<TestDatabase> => {
+/**
+ * mysql2 reads and writes `Date` values in the process's local time zone unless told
+ * otherwise, so timestamps shift whenever TZ differs between writes and reads. `MysqlClient`
+ * ignores `poolConfig` when given a `url`, so the option goes into the URL.
+ */
+const utcMysqlUrl = (uri: string): string => `${uri}${new URL(uri).search === '' ? '?' : '&'}timezone=Z`
+
+export const mysqlDatabase = async ({
+  maxConnections,
+  preparedStatements = true,
+}: DatabaseOptions = {}): Promise<TestDatabase> => {
   const container = await new MySqlContainer('mysql:8.4').start()
-  return fromLayer('mysql', MysqlClient.layer({ url: Redacted.make(container.getConnectionUri()) }), () =>
-    container.stop(),
-  )
+  const layer = MysqlClient.layer({
+    url: Redacted.make(utcMysqlUrl(container.getConnectionUri())),
+    disablePreparedStatements: !preparedStatements,
+    ...maxConnectionsOption(maxConnections),
+  })
+  return fromLayer('mysql', layer, () => container.stop())
 }

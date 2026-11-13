@@ -42,6 +42,62 @@ const loweredList = (sql: SqlClient.SqlClient, values: Arr.NonEmptyReadonlyArray
   sql`(${sql.join(', ', false)(Arr.map(values, (value) => sql`LOWER(${value})`))})`
 
 // ---------------------------------------------------------------------------
+// Exact comparison (mode "sensitive")
+
+/**
+ * MySQL's default collations ignore case and accents, so a string is compared exactly
+ * only when bound with a binary collation. The collation goes on the value rather than
+ * the column: the value is always utf8mb4, whatever the column's character set is.
+ */
+const binary = (sql: SqlClient.SqlClient, value: unknown): Fragment => sql`(${value} COLLATE utf8mb4_bin)`
+
+const binaryList = (sql: SqlClient.SqlClient, values: Arr.NonEmptyReadonlyArray<unknown>): Fragment =>
+  sql`(${sql.join(', ', false)(Arr.map(values, (value) => binary(sql, value)))})`
+
+interface Exact {
+  readonly eq: (condition: Condition) => Fragment
+  readonly ne: (condition: Condition) => Fragment
+  readonly in: (condition: Condition, values: Arr.NonEmptyReadonlyArray<unknown>) => Fragment
+  readonly not_in: (condition: Condition, values: Arr.NonEmptyReadonlyArray<unknown>) => Fragment
+}
+
+/** SQLite and PostgreSQL compare strings exactly by default. */
+const plainExact: Exact = {
+  eq: (condition) => condition.sql`${condition.column} = ${scalar(condition)}`,
+  ne: (condition) => condition.sql`${condition.column} <> ${scalar(condition)}`,
+  in: (condition, values) => condition.sql`${condition.column} IN ${condition.sql.in(values)}`,
+  not_in: (condition, values) => condition.sql`${condition.column} NOT IN ${condition.sql.in(values)}`,
+}
+
+const allStrings = (values: ReadonlyArray<unknown>): boolean => Arr.every(values, Predicate.isString)
+
+/**
+ * `=` and `IN` keep the plain comparison as well: it is an exact lookup on the column's index
+ * whatever the server can do with a comparison under another collation (MySQL 8.4 falls back to a
+ * range scan of the index, `const` becomes `range`), and the binary comparison decides.
+ */
+const mysqlExact: Exact = {
+  eq: (condition) =>
+    Predicate.isString(condition.value)
+      ? condition.sql`(${condition.column} = ${condition.value} AND ${condition.column} = ${binary(condition.sql, condition.value)})`
+      : plainExact.eq(condition),
+  ne: (condition) =>
+    Predicate.isString(condition.value)
+      ? condition.sql`${condition.column} <> ${binary(condition.sql, condition.value)}`
+      : plainExact.ne(condition),
+  in: (condition, values) =>
+    allStrings(values)
+      ? condition.sql`(${condition.column} IN ${condition.sql.in(values)} AND ${condition.column} IN ${binaryList(condition.sql, values)})`
+      : plainExact.in(condition, values),
+  not_in: (condition, values) =>
+    allStrings(values)
+      ? condition.sql`${condition.column} NOT IN ${binaryList(condition.sql, values)}`
+      : plainExact.not_in(condition, values),
+}
+
+const exact: Record<Dialect, Exact> = { sqlite: plainExact, pg: plainExact, mysql: mysqlExact }
+
+// ---------------------------------------------------------------------------
 // Pattern matching (contains / starts_with / ends_with)
 
 interface Wildcards {
@@ -67,7 +123,7 @@ const sensitiveMatch: Record<Dialect, (condition: Condition, wildcards: Wildcard
   pg: ({ sql, column, value }, wildcards) =>
     sql`${column} LIKE ${likePattern(String(value), wildcards)} ${escapeClause(sql)}`,
   mysql: ({ sql, column, value }, wildcards) =>
-    sql`${column} LIKE ${likePattern(String(value), wildcards)} ${escapeClause(sql)}`,
+    sql`${column} LIKE ${binary(sql, likePattern(String(value), wildcards))} ${escapeClause(sql)}`,
 }
 
 const insensitiveMatch: Record<Dialect, (condition: Condition, wildcards: Wildcards) => Fragment> = {
@@ -98,13 +154,13 @@ const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
       ? condition.sql`${condition.column} IS NULL`
       : condition.insensitive
         ? condition.sql`${lowered(condition)} = LOWER(${condition.value})`
-        : condition.sql`${condition.column} = ${scalar(condition)}`,
+        : exact[condition.dialect].eq(condition),
   ne: (condition) =>
     condition.value === null
       ? condition.sql`${condition.column} IS NOT NULL`
       : condition.insensitive
         ? condition.sql`${lowered(condition)} <> LOWER(${condition.value})`
-        : condition.sql`${condition.column} <> ${scalar(condition)}`,
+        : exact[condition.dialect].ne(condition),
   lt: compare('<'),
   lte: compare('<='),
   gt: compare('>'),
@@ -115,7 +171,7 @@ const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
       onNonEmpty: (values) =>
         condition.insensitive
           ? condition.sql`${lowered(condition)} IN ${loweredList(condition.sql, values)}`
-          : condition.sql`${condition.column} IN ${condition.sql.in(values)}`,
+          : exact[condition.dialect].in(condition, values),
     }),
   not_in: (condition) =>
     Arr.match(list(condition), {
@@ -123,7 +179,7 @@ const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
       onNonEmpty: (values) =>
         condition.insensitive
           ? condition.sql`${lowered(condition)} NOT IN ${loweredList(condition.sql, values)}`
-          : condition.sql`${condition.column} NOT IN ${condition.sql.in(values)}`,
+          : exact[condition.dialect].not_in(condition, values),
     }),
   contains: patternMatch({ before: true, after: true }),
   starts_with: patternMatch({ before: false, after: true }),

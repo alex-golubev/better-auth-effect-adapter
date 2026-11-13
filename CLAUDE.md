@@ -22,7 +22,10 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 ## Layout
 
 - `src/` holds the library. Unit tests sit next to the code as `*.test.ts`.
-- `test/` holds integration tests. They run the official `@better-auth/test-utils` suites against SQLite (in-memory), plus PostgreSQL and MySQL via testcontainers.
+- `test/` holds integration tests. They run against SQLite (in-memory), plus PostgreSQL and MySQL via testcontainers (`test/harness.ts`).
+  - `sqlite.test.ts`, `postgres.test.ts`, `mysql.test.ts` run every official `@better-auth/test-utils` suite through `runOfficialSuites` (`test/suites.ts`).
+  - `schema.test.ts` checks the generated DDL, `issue-4.test.ts` the app-transaction bridge on all three databases, and `pool.test.ts` that auth shares the app's PostgreSQL pool.
+  - Databases are opened with top-level `await` (concurrently via `Promise.all`) and disposed in `afterAll`, which avoids `let` + `beforeAll`.
 
 ## Code style
 
@@ -54,8 +57,15 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - The adapter's runner uses that context only when it carries the adapter's own `SqlClient` (`ambientContext`); otherwise it uses the root context.
   - `config.transaction` runs better-auth's callback inside `sql.withTransaction` on that ambient context, so inside an app transaction it becomes a savepoint.
   - `test/issue-4.test.ts` is the regression test.
-- MySQL: `LIMIT` and `OFFSET` go through `sql.literal`. There is no `RETURNING`; emulate it inside a transaction.
+- MySQL:
+  - `LIMIT` and `OFFSET` go through `sql.literal`.
+  - There is no `RETURNING` (`returning.mysql` in `src/operations.ts`). Inserts read the row back by id: the one better-auth generated, else `insertId`. `update`, `consumeOne` and `incrementOne` lock the matching rows with `SELECT … FOR UPDATE` inside `sql.withTransaction`, then write and read back by id. MySQL can't `LIMIT` an `IN` subquery.
+  - Default collations ignore case, so `sensitive` string comparisons bind the value with `COLLATE utf8mb4_bin` (`src/where.ts`). `=` and `IN` keep the plain comparison too, so the lookup stays an exact index lookup. This works on any schema, including `_ci` columns.
+  - mysql2 reads and writes `Date` in the process's local time zone by default. Apps need `timezone: 'Z'`; with a `url`, `MysqlClient` ignores `poolConfig`, so it goes into the URL (`?timezone=Z`). The adapter can't fix this, since the driver parses dates.
 - `effect/sql` and the `@effect/sql-*` drivers are marked `@stability unstable`, so they may break between minor versions. They are allow-listed in `tsconfig.json` (`allowedUnstableApis`).
-- `@effect/sql-pg` caches prepared statements per connection by SQL text (`prepare: true` by default). If a table is recreated with different column types on a live pool, the cached parameter types go stale (`operator does not exist: uuid = text`). The test harness uses `prepare: false` for this reason.
+- Both `@effect/sql-pg` and `@effect/sql-mysql2` use server-side prepared statements by default, cached per connection by SQL text. A cached statement outlives a table recreated with different column types on a live pool.
+  - PostgreSQL fails loudly: `operator does not exist: uuid = text`.
+  - MySQL 8.4 fails intermittently, depending on which pooled connection still holds the old statement. Inserts fail with "Data too long", updates with "Truncated incorrect DOUBLE value", and reads silently match nothing.
+  - The harness option `preparedStatements: false` (PG `prepare: false`, MySQL `disablePreparedStatements: true`) is used by the tests that recreate tables with different id types: the official suites and `schema.test.ts`. The others keep the drivers' default.
 - The DDL generator (`src/schema.ts`) is also what integration tests use to build schemas. `test/harness.ts` → `resetSchema(options)` drops all tables and recreates them.
 - SQLite (`node:sqlite`): `Date` and plain objects can't be bound as parameters.

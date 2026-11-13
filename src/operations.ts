@@ -145,17 +145,101 @@ const nativeReturning: Returning = {
     ),
 }
 
-const unsupported = (feature: string): Operation<never> => Effect.fail(adapterError(`${feature} is not supported yet`))
+const byId = (sql: SqlClient.SqlClient, table: string, id: unknown): Operation<Row | null> =>
+  Effect.map(sql<Row>`SELECT * FROM ${sql(table)} WHERE ${sql('id')} = ${id} LIMIT 1`, (rows) =>
+    Option.getOrNull(Arr.head(rows)),
+  )
+
+/** Matching rows, locked until the surrounding transaction ends. */
+const lockMatching = (
+  sql: SqlClient.SqlClient,
+  table: string,
+  where: Option.Option<Fragment>,
+  { columns, limit }: { readonly columns: Fragment; readonly limit: Fragment },
+) => sql<Row>`SELECT ${columns} FROM ${sql(table)} ${whereSql(sql, where)} ${limit} FOR UPDATE`
+
+/** The id of an inserted row: the one better-auth generated, else the auto-increment value. */
+const insertedId = (data: Row, raw: unknown): Effect.Effect<unknown, EffectSqlAdapterError> =>
+  pipe(
+    Option.fromNullishOr(data.id),
+    Option.orElse(() =>
+      pipe(
+        Option.liftPredicate(raw, Predicate.hasProperty('insertId')),
+        Option.map((result) => result.insertId),
+        // mysql2 reports 0 when the table has no auto-increment column; large ids arrive as strings.
+        Option.filter(
+          (id) => (Predicate.isNumber(id) || Predicate.isBigInt(id) || Predicate.isString(id)) && Number(id) > 0,
+        ),
+      ),
+    ),
+    Effect.fromOption,
+    Effect.mapError(() => adapterError('The mysql driver did not report the id of the inserted row')),
+  )
+
+/**
+ * MySQL has no RETURNING. Rows are read back by id; statements that pick rows by a condition
+ * lock them first (`SELECT … FOR UPDATE`) inside a transaction, which inside an app transaction
+ * is a savepoint. MySQL can't `LIMIT` an `IN` subquery, so `firstMatch` doesn't apply here.
+ */
+const mysqlReturning: Returning = {
+  // The insert is atomic on its own and its id is known, so no transaction is needed.
+  insert: (sql, table, data) =>
+    Effect.gen(function* () {
+      const raw = yield* executeRaw(sql, sql<Row>`INSERT INTO ${sql(table)} ${sql.insert(data)}`)
+      const id = yield* insertedId(data, raw)
+      const row = yield* byId(sql, table, id)
+      return yield* Effect.fromNullishOr(row).pipe(
+        Effect.mapError(() => adapterError(`INSERT into "${table}" left no row to return`)),
+      )
+    }),
+  update: (sql, table, where, data) =>
+    sql.withTransaction(
+      Effect.flatMap(lockMatching(sql, table, where, { columns: sql`${sql('id')}`, limit: empty(sql) }), (locked) =>
+        Arr.match(locked, {
+          onEmpty: () => Effect.succeed(null),
+          onNonEmpty: (matched) =>
+            Effect.andThen(
+              sql`UPDATE ${sql(table)} SET ${sql.update(data)} WHERE ${sql.in(
+                'id',
+                Arr.map(matched, (row) => row.id),
+              )}`,
+              byId(sql, table, data.id ?? Arr.headNonEmpty(matched).id),
+            ),
+        }),
+      ),
+    ),
+  consume: (sql, table, where) =>
+    sql.withTransaction(
+      Effect.flatMap(
+        lockMatching(sql, table, where, { columns: sql.literal('*'), limit: sql.literal('LIMIT 1') }),
+        (locked) =>
+          Option.match(Arr.head(locked), {
+            onNone: () => Effect.succeed(null),
+            onSome: (row) => Effect.as(sql`DELETE FROM ${sql(table)} WHERE ${sql('id')} = ${row.id}`, row),
+          }),
+      ),
+    ),
+  modifyOne: (sql, table, where, assignments) =>
+    sql.withTransaction(
+      Effect.flatMap(
+        lockMatching(sql, table, where, { columns: sql`${sql('id')}`, limit: sql.literal('LIMIT 1') }),
+        (locked) =>
+          Option.match(Arr.head(locked), {
+            onNone: () => Effect.succeed(null),
+            onSome: ({ id }) =>
+              Effect.andThen(
+                sql`UPDATE ${sql(table)} SET ${assignments} WHERE ${sql('id')} = ${id}`,
+                byId(sql, table, id),
+              ),
+          }),
+      ),
+    ),
+}
 
 const returning: Record<Dialect, Returning> = {
   sqlite: nativeReturning,
   pg: nativeReturning,
-  mysql: {
-    insert: () => unsupported('INSERT on MySQL'),
-    update: () => unsupported('UPDATE on MySQL'),
-    consume: () => unsupported('consumeOne on MySQL'),
-    modifyOne: () => unsupported('incrementOne on MySQL'),
-  },
+  mysql: mysqlReturning,
 }
 
 // ---------------------------------------------------------------------------

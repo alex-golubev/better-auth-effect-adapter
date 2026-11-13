@@ -85,6 +85,32 @@ describe('whereCondition: SQL', () => {
     ])
   })
 
+  it('compares strings exactly on MySQL with a binary collation, keeping the indexable comparison', async () => {
+    expect(await compile('mysql', [where('a', 'eq', 'X')])).toEqual([
+      'SELECT * FROM "t" WHERE ("a" = ? AND "a" = (? COLLATE utf8mb4_bin))',
+      ['X', 'X'],
+    ])
+    expect(await compile('mysql', [where('a', 'in', ['X', 'y'])])).toEqual([
+      'SELECT * FROM "t" WHERE ("a" IN (?,?) AND "a" IN ((? COLLATE utf8mb4_bin), (? COLLATE utf8mb4_bin)))',
+      ['X', 'y', 'X', 'y'],
+    ])
+    expect(await compile('mysql', [where('a', 'ne', 'X'), where('b', 'not_in', ['X'])])).toEqual([
+      'SELECT * FROM "t" WHERE ("a" <> (? COLLATE utf8mb4_bin) AND "b" NOT IN ((? COLLATE utf8mb4_bin)))',
+      ['X', 'X'],
+    ])
+    expect(await compile('mysql', [where('a', 'starts_with', 'Ab')])).toEqual([
+      `SELECT * FROM "t" WHERE "a" LIKE (? COLLATE utf8mb4_bin) ESCAPE '!'`,
+      ['Ab%'],
+    ])
+  })
+
+  it('leaves non-string comparisons on MySQL alone', async () => {
+    expect(await compile('mysql', [where('a', 'eq', 5), where('b', 'in', [1, 2])])).toEqual([
+      'SELECT * FROM "t" WHERE ("a" = ? AND "b" IN (?,?))',
+      [5, 1, 2],
+    ])
+  })
+
   it('only applies insensitive mode to strings', async () => {
     expect(await compile('pg', [where('a', 'eq', 5, { mode: 'insensitive' })])).toEqual([
       'SELECT * FROM "t" WHERE "a" = ?',

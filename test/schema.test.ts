@@ -2,7 +2,7 @@ import type { BetterAuthOptions } from 'better-auth'
 import { organization } from 'better-auth/plugins'
 import { Effect } from 'effect'
 import { SqlClient } from 'effect/sql'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import type { IdStrategy } from '../src/schema'
 import { mysqlDatabase, postgresDatabase, sqliteDatabase, type TestDatabase } from './harness'
 
@@ -56,21 +56,22 @@ const kitchenSink = (idStrategy: IdStrategy): BetterAuthOptions => ({
 
 const strategies: ReadonlyArray<IdStrategy> = ['string', 'serial', 'uuid']
 
-describe.each([
-  ['sqlite', sqliteDatabase],
-  ['pg', postgresDatabase],
-  ['mysql', mysqlDatabase],
-] as const)('generated schema on %s', (_, connect) => {
-  let db: TestDatabase
+const expectIdShape: Record<IdStrategy, (id: unknown) => void> = {
+  string: (id) => expect(id).toBe('user-1'),
+  serial: (id) => expect(Number(id)).toBeGreaterThan(0),
+  uuid: (id) => expect(String(id)).toMatch(/^[0-9a-f-]{36}$/),
+}
 
-  beforeAll(async () => {
-    db = await connect()
-  })
+// Each test recreates the tables with another id type on the same pool (see `preparedStatements`).
+const databases: ReadonlyArray<TestDatabase> = await Promise.all([
+  sqliteDatabase(),
+  postgresDatabase({ preparedStatements: false }),
+  mysqlDatabase({ preparedStatements: false }),
+])
 
-  afterAll(async () => {
-    await db?.dispose()
-  })
+afterAll(() => Promise.all(databases.map((db) => db.dispose())))
 
+describe.each(databases)('generated schema on $dialect', (db) => {
   it.each(strategies)('creates the kitchen-sink schema with %s ids, twice', async (idStrategy) => {
     await db.resetSchema(kitchenSink(idStrategy))
     await db.resetSchema(kitchenSink(idStrategy))
@@ -118,7 +119,6 @@ describe.each([
     )
 
     expect(result.sessions).toBe(0)
-    if (idStrategy === 'serial') expect(Number(result.userId)).toBeGreaterThan(0)
-    if (idStrategy === 'uuid') expect(String(result.userId)).toMatch(/^[0-9a-f-]{36}$/)
+    expectIdShape[idStrategy](result.userId)
   })
 })
