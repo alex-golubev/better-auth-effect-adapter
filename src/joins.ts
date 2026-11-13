@@ -45,7 +45,7 @@ const fetchJoined = (
   pipe(
     Array.map(parents, (parent) => parent[join.on.from]),
     Array.filter(Predicate.isNotNullish),
-    Array.dedupeWith((a, b) => keyOf(a) === keyOf(b)),
+    (keys) => Record.values(Record.fromEntries(Array.map(keys, (key) => [keyOf(key), key] as const))),
     Array.match({
       onEmpty: () => Effect.succeed<ReadonlyArray<Row>>([]),
       onNonEmpty: (keys) => joinedRows(sql, table, join, keys),

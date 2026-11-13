@@ -7,7 +7,7 @@ import {
   type DBAdapterDebugLogOption,
   type JoinConfig,
 } from 'better-auth/adapters'
-import { Array, type Context, Data, Effect, Match, Option, Predicate, pipe, Record } from 'effect'
+import { Array, Context, Data, Effect, Match, Option, Predicate, pipe, Record, Tracer } from 'effect'
 import { SqlClient, type SqlError } from 'effect/sql'
 import { ambientContext, withContext } from './context'
 import { type Dialect, dialectOf, dialectProfiles } from './dialect'
@@ -36,17 +36,25 @@ type Transaction = <R>(callback: (trx: DBTransactionAdapter) => Promise<R>) => P
 const DEFAULT_SCHEMA_FILE = 'better-auth-schema.sql'
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  Predicate.isObject(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value))
+  Predicate.isObject(value) && Array.contains([Object.prototype, null], Object.getPrototypeOf(value))
+
+const toNumber = (value: unknown): unknown => (Predicate.isBigInt(value) ? Number(value) : value)
+
+const columnsToNumbers = (value: unknown): unknown => (isPlainObject(value) ? Record.map(value, toNumber) : value)
 
 /**
  * @effect/sql-pg returns int8 as a JS BigInt, which better-auth's number fields and JSON responses can't take.
- * Joined rows sit inside the row, hence the recursion; Dates and other class instances stay as they are.
+ * Joined rows sit one level down, as a row or an array of rows; JSON contents can't hold BigInts.
  */
-const withNumbers = (value: unknown): unknown =>
-  Match.value(value).pipe(
-    Match.when(Predicate.isBigInt, (n) => Number(n)),
-    Match.when(Array.isArray, (items) => Array.map(items, withNumbers)),
-    Match.when(isPlainObject, (object) => Record.map(object, withNumbers)),
+const rowToNumbers = (row: Record<string, unknown>): Record<string, unknown> =>
+  Record.map(row, (value) =>
+    Array.isArray(value) ? Array.map(value, columnsToNumbers) : toNumber(columnsToNumbers(value)),
+  )
+
+const withNumbers = (result: unknown): unknown =>
+  Match.value(result).pipe(
+    Match.when(Array.isArray, (rows) => Array.map(rows, (row) => (isPlainObject(row) ? rowToNumbers(row) : row))),
+    Match.when(isPlainObject, rowToNumbers),
     Match.orElse((other) => other),
   )
 
@@ -107,6 +115,7 @@ const createCustomAdapter =
             })
             const found = yield* Operations.findMany(
               sql,
+              dialect,
               { table: model, columns: names, where: condition(sql, where) },
               { sort, limit, offset: Option.fromUndefinedOr(offset) },
             )
@@ -200,8 +209,14 @@ export const make = (
   options: EffectSqlAdapterOptions = {},
 ): Effect.Effect<EffectSqlAdapter, EffectSqlAdapterError, SqlClient.SqlClient> =>
   Effect.gen(function* () {
-    const context = yield* Effect.context<SqlClient.SqlClient>()
-    return buildAdapter(context, yield* dialectOf, options)
+    const dialect = yield* dialectOf
+    const sql = yield* SqlClient.SqlClient
+    // A transaction or span open around `make` ends long before the adapter's queries run.
+    const context = Context.omit(
+      sql.transactionService,
+      Tracer.ParentSpan,
+    )(yield* Effect.context<SqlClient.SqlClient>())
+    return buildAdapter(context, dialect, options)
   })
 
 /** `make` for apps outside Effect, e.g. with `await runtime.context()`. Throws on unsupported dialects. */

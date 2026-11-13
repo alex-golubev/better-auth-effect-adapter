@@ -41,7 +41,7 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - Don't use `throw`, `try`/`catch`, `let`, loops (`for`/`while`), `switch`, mutation (`push`/`splice`/assignment), or `if` statements.
   - `Effect.try` is allowed only to wrap third-party code that throws (for example better-auth's `getFieldName`), mapping the failure to a typed error. Never use it around our own code; make our code fail as a value instead.
   - Errors are values. Fail with typed errors (`Effect.fail`, `Effect.filterOrFail`, `Effect.fromOption` + `mapError`), and keep the error type in the signature.
-  - Use `Option` instead of null/undefined checks.
+  - Use `Option` instead of null/undefined checks for values that drive logic. `x ?? default` for a parameter's default value is fine.
   - Branch on a dialect (or another closed set) with lookup tables like `Record<Dialect, …>`. Use `Match` for multi-way branching on values or types. Ternaries are fine for simple two-way expressions.
   - Use `effect`'s `Array`/`Option`/`Order`/`Predicate` and `pipe`. Use `Effect.forEach`/`Effect.all` instead of looping with `yield*`.
   - Escape hatches exist only at the boundaries:
@@ -79,8 +79,8 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - `config.transaction` runs better-auth's callback inside `sql.withTransaction` on that ambient context, so inside an app transaction it becomes a savepoint.
   - `test/issue-4.test.ts` is the regression test.
 - MySQL:
-  - `LIMIT` and `OFFSET` go through `sql.literal`.
-  - There is no `RETURNING` (`returning.mysql` in `src/operations.ts`). Inserts read the row back by id: the one better-auth generated, else `insertId`. `update`, `consumeOne` and `incrementOne` lock the matching rows with `SELECT … FOR UPDATE` inside `sql.withTransaction`, then write and read back by id. MySQL can't `LIMIT` an `IN` subquery.
+  - `LIMIT` and `OFFSET` go through `sql.literal`; mysql2 can't bind them. On the other dialects they stay parameters, so each page doesn't become a new prepared statement.
+  - There is no `RETURNING` (`returning.mysql` in `src/operations.ts`). Inserts read the row back by id: the one better-auth generated, else `insertId`. The latter runs in a transaction, so an unreadable id rolls the insert back. `update`, `consumeOne` and `incrementOne` lock the matching rows with `SELECT … FOR UPDATE` inside `sql.withTransaction`, then write and read back by id. MySQL can't `LIMIT` an `IN` subquery.
   - Default collations ignore case, so `sensitive` string comparisons bind the value with `COLLATE utf8mb4_bin` (`src/where.ts`). `=` and `IN` keep the plain comparison too, so the lookup stays an exact index lookup. This works on any schema, including `_ci` columns.
   - mysql2 reads and writes `Date` in the process's local time zone by default. Apps need `timezone: 'Z'`; with a `url`, `MysqlClient` ignores `poolConfig`, so it goes into the URL (`?timezone=Z`). The adapter can't fix this, since the driver parses dates.
 - `effect/sql`, the `@effect/sql-*` drivers and `@effect/vitest` are marked `@stability unstable`, so they may break between minor versions. They are allow-listed in `tsconfig.json` (`allowedUnstableApis`).
@@ -99,4 +99,7 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 - PostgreSQL re-checks only a statement's outer conditions on a row that a concurrent write changed, not a subquery's. `firstMatch` (`consumeOne` / `incrementOne`) therefore repeats the condition outside its `id IN (SELECT … LIMIT 1)`.
 - `@effect/sql-pg` returns int8 as a JS BigInt. The adapter turns BigInts in result rows into numbers (`withNumbers` in `src/adapter.ts`).
 - Drivers of one dialect report affected rows under different keys (`changes`, `rowCount`, `affectedRows`, `rowsAffected`). `affectedRows` accepts any of them.
+- `incrementOne` compiles to `COALESCE(col, 0) + n`. better-auth's own fallback treats a NULL counter as 0, and two-factor relies on that.
+- `make()` drops `sql.transactionService` and `Tracer.ParentSpan` from the context it keeps. A transaction or span open around it has ended by the time queries run.
+- `in`/`not_in` give null list elements their own `IS [NOT] NULL` clause. SQL's `NOT IN (…, NULL)` matches nothing.
 - `delete` with an empty `where` deletes nothing. `deleteMany` with an empty `where` clears the table, as the official suites require.

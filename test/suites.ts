@@ -17,12 +17,15 @@ export interface SuiteOptions {
   readonly disableTests?: Readonly<Record<string, boolean>>
 }
 
-/** The suites drive Vitest through a Promise API, hence a `ManagedRuntime` rather than a `layer`. */
-export const runOfficialSuites = (database: Database, { disableTests = {} }: SuiteOptions = {}) =>
-  Effect.gen(function* () {
-    const runtime = ManagedRuntime.make(database)
+/**
+ * The suites drive Vitest through a Promise API, hence a `ManagedRuntime` rather than a `layer`.
+ * It lives until the suites finish (`onFinish`), or is disposed right away if they can't be set up.
+ */
+export const runOfficialSuites = (database: Database, { disableTests = {} }: SuiteOptions = {}) => {
+  const runtime = ManagedRuntime.make(database)
+  const suiteOptions = { disableTests }
+  return Effect.gen(function* () {
     const context = yield* runtime.contextEffect
-    const suiteOptions = { disableTests }
     const { execute } = yield* Effect.promise(() =>
       testAdapter({
         adapter: () => fromContext(context, { debugLogs: { isRunningAdapterTests: true } }),
@@ -41,4 +44,5 @@ export const runOfficialSuites = (database: Database, { disableTests = {} }: Sui
       }),
     )
     yield* Effect.sync(execute)
-  })
+  }).pipe(Effect.onError(() => Effect.promise(() => runtime.dispose())))
+}

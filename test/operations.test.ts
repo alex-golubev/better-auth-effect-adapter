@@ -12,6 +12,19 @@ import { type Database, mysqlDatabase, postgresDatabase, resetSchema, sqliteData
 
 const options: BetterAuthOptions = { rateLimit: { enabled: true, storage: 'database' } }
 
+/** A nullable counter, like two-factor's `failedVerificationCount` on rows that predate it. */
+const counterOptions: BetterAuthOptions = {
+  plugins: [
+    {
+      id: 'counter',
+      schema: { counter: { fields: { name: { type: 'string' }, hits: { type: 'number', required: false } } } },
+    },
+  ],
+}
+
+/** Ids come from the database: on MySQL, from a default that isn't AUTO_INCREMENT. */
+const databaseIdOptions: BetterAuthOptions = { ...counterOptions, advanced: { database: { generateId: false } } }
+
 /** Runs `first` in a transaction held open while `second` runs, and returns what `second` got. */
 const whileLocked = <A, B>(first: () => Promise<A>, second: () => Promise<B>) =>
   Effect.gen(function* () {
@@ -38,7 +51,7 @@ const databases: ReadonlyArray<readonly [string, Database]> = [
   ['mysql', mysqlDatabase()],
 ]
 
-describe.each(databases)('operations under concurrency (%s)', (_, database) => {
+describe.each(databases)('operations (%s)', (name, database) => {
   withDatabase(database)((it) => {
     it.effect('incrementOne re-checks its guard on a row a concurrent call changed', () =>
       Effect.gen(function* () {
@@ -87,6 +100,34 @@ describe.each(databases)('operations under concurrency (%s)', (_, database) => {
     )
 
     // @effect/sql-pg decodes int8 as a JS BigInt.
+    it.effect('incrementOne counts a NULL counter as 0', () =>
+      Effect.gen(function* () {
+        yield* resetSchema(counterOptions)
+        const adapter = (yield* make())(counterOptions)
+        yield* Effect.promise(() => adapter.create({ model: 'counter', data: { name: 'a' } }))
+        const bumped = yield* Effect.promise(() =>
+          adapter.incrementOne<{ hits: number | null }>({
+            model: 'counter',
+            where: [{ field: 'name', value: 'a' }],
+            increment: { hits: 1 },
+          }),
+        )
+        expect(bumped?.hits).toBe(1)
+      }),
+    )
+
+    it.effect.runIf(name === 'mysql')('rolls back an insert whose id it cannot read back', () =>
+      Effect.gen(function* () {
+        yield* resetSchema(databaseIdOptions)
+        const sql = yield* SqlClient.SqlClient
+        yield* sql`ALTER TABLE ${sql('counter')} MODIFY ${sql('id')} varchar(36) NOT NULL DEFAULT (UUID())`
+        const adapter = (yield* make())(databaseIdOptions)
+        const exit = yield* Effect.exit(Effect.promise(() => adapter.create({ model: 'counter', data: { name: 'a' } })))
+        expect(exit._tag).toBe('Failure')
+        expect(yield* Effect.promise(() => adapter.count({ model: 'counter' }))).toBe(0)
+      }),
+    )
+
     it.effect('returns bigint columns as numbers', () =>
       Effect.gen(function* () {
         yield* resetSchema(options)

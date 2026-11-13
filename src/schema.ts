@@ -311,7 +311,7 @@ const mysqlIndexedStringLength = (table: Table, column: string): Option.Option<n
   const isStringColumn = (name: string) =>
     Array.some(table.columns, (candidate) => candidate.name === name && isStringLike(candidate.field))
   return pipe(
-    Array.filter(table.indexes, (index) => index.columns.includes(column)),
+    Array.filter(table.indexes, (index) => Array.contains(index.columns, column)),
     Option.liftPredicate(Array.isReadonlyArrayNonEmpty),
     Option.map(
       Array.reduce(MYSQL_INDEXED_STRING_LENGTH, (length, index) => {

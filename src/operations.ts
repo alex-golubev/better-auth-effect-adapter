@@ -53,18 +53,29 @@ const nonNegativeInteger = (name: string, value: number): Effect.Effect<number, 
     ),
   )
 
-/** Validated literals: mysql2 can't bind LIMIT/OFFSET. */
+/**
+ * mysql2 can't bind LIMIT/OFFSET, so MySQL gets validated literals. Elsewhere they stay parameters:
+ * a literal per page would make each page a new prepared statement.
+ */
+const pageNumber: Record<Dialect, (sql: SqlClient.SqlClient, n: number) => Fragment> = {
+  sqlite: (sql, n) => sql`${n}`,
+  pg: (sql, n) => sql`${n}`,
+  mysql: (sql, n) => sql.literal(String(n)),
+}
+
 const pageSql = (
   sql: SqlClient.SqlClient,
+  dialect: Dialect,
   { sort, limit, offset }: Page,
 ): Effect.Effect<Fragment, EffectSqlAdapterError> =>
   Effect.gen(function* () {
     const rows = yield* nonNegativeInteger('limit', limit)
     const skip = yield* Option.match(offset, {
       onNone: () => Effect.succeed(empty(sql)),
-      onSome: (n) => Effect.map(nonNegativeInteger('offset', n), (valid) => sql`OFFSET ${sql.literal(String(valid))}`),
+      onSome: (n) =>
+        Effect.map(nonNegativeInteger('offset', n), (valid) => sql`OFFSET ${pageNumber[dialect](sql, valid)}`),
     })
-    return sql`${orderBySql(sql, sort)} LIMIT ${sql.literal(String(rows))} ${skip}`
+    return sql`${orderBySql(sql, sort)} LIMIT ${pageNumber[dialect](sql, rows)} ${skip}`
   })
 
 /** `.raw` skips `transformQueryNames`, so compile first. */
@@ -171,13 +182,19 @@ const insertedId = (data: Row, raw: unknown): Effect.Effect<unknown, EffectSqlAd
  * so a concurrent call can't take them. MySQL can't `LIMIT` an `IN` subquery, so no `firstMatch`.
  */
 const mysqlReturning: Returning = {
-  // Atomic on its own, with a known id: no transaction needed.
-  insert: (sql, table, data) =>
-    Effect.gen(function* () {
+  // With a known id the insert is atomic on its own. Without one, the id may turn out unreadable
+  // (a database default that isn't AUTO_INCREMENT): the transaction then rolls the insert back.
+  insert: (sql, table, data) => {
+    const insertAndRead = Effect.gen(function* () {
       const raw = yield* executeRaw(sql, sql<Row>`INSERT INTO ${sql(table)} ${sql.insert(data)}`)
       const id = yield* insertedId(data, raw)
       return yield* firstRow(yield* selectById(sql, table, id), `INSERT into "${table}" left no row to return`)
-    }),
+    })
+    return Option.match(Option.fromNullishOr(data.id), {
+      onSome: () => insertAndRead,
+      onNone: () => sql.withTransaction(insertAndRead),
+    })
+  },
   update: (sql, table, where, data) =>
     sql.withTransaction(
       Effect.flatMap(lockMatching(sql, table, where, { columns: sql`${sql('id')}`, limit: empty(sql) }), (locked) =>
@@ -189,7 +206,14 @@ const mysqlReturning: Returning = {
                 'id',
                 Array.map(matched, (row) => row.id),
               )}`,
-              Effect.map(selectById(sql, table, data.id ?? Array.headNonEmpty(matched).id), firstOrNull),
+              Effect.map(
+                selectById(
+                  sql,
+                  table,
+                  Option.getOrElse(Option.fromNullishOr(data.id), () => Array.headNonEmpty(matched).id),
+                ),
+                firstOrNull,
+              ),
             ),
         }),
       ),
@@ -239,11 +263,12 @@ export const findOne = (sql: SqlClient.SqlClient, { table, columns, where }: Rea
 
 export const findMany = (
   sql: SqlClient.SqlClient,
+  dialect: Dialect,
   { table, columns, where }: Read,
   page: Page,
 ): Operation<ReadonlyArray<Row>> =>
   Effect.flatMap(
-    pageSql(sql, page),
+    pageSql(sql, dialect, page),
     (paging) => sql<Row>`SELECT ${columnsSql(sql, columns)} FROM ${sql(table)} ${whereSql(sql, where)} ${paging}`,
   )
 
@@ -303,7 +328,11 @@ const assignments = (sql: SqlClient.SqlClient, increment: Record<string, number>
     ', ',
     false,
   )([
-    ...Array.map(Record.toEntries(increment), ([column, by]) => sql`${sql(column)} = ${sql(column)} + ${by}`),
+    // NULL counts as 0, as in better-auth's own fallback: two-factor relies on it for rows predating the counter.
+    ...Array.map(
+      Record.toEntries(increment),
+      ([column, by]) => sql`${sql(column)} = COALESCE(${sql(column)}, 0) + ${by}`,
+    ),
     ...Array.map(Record.toEntries(set), ([column, value]) => sql`${sql(column)} = ${value}`),
   ])
 

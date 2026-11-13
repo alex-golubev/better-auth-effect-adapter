@@ -60,6 +60,23 @@ layer(Sqlite)('whereCondition: SQL', (it) => {
     }),
   )
 
+  it.effect('gives nulls in in / not_in lists their own clause', () =>
+    Effect.gen(function* () {
+      expect(yield* compile('pg', [where('a', 'in', ['x', null] as unknown as CleanedWhere['value'])])).toEqual([
+        'SELECT * FROM "t" WHERE ("a" IN (?) OR "a" IS NULL)',
+        ['x'],
+      ])
+      expect(yield* compile('pg', [where('a', 'not_in', ['x', null] as unknown as CleanedWhere['value'])])).toEqual([
+        'SELECT * FROM "t" WHERE ("a" NOT IN (?) AND "a" IS NOT NULL)',
+        ['x'],
+      ])
+      expect(yield* compile('pg', [where('a', 'in', [null] as unknown as CleanedWhere['value'])])).toEqual([
+        'SELECT * FROM "t" WHERE "a" IS NULL',
+        [],
+      ])
+    }),
+  )
+
   it.effect('parenthesizes a single-value insensitive list', () =>
     Effect.gen(function* () {
       expect(yield* compile('sqlite', [where('a', 'not_in', ['X'], { mode: 'insensitive' })])).toEqual([
@@ -204,6 +221,24 @@ layer(Sqlite, { buildPerTest: true })('whereCondition: behavior on SQLite', (it)
       expect(yield* matching([where('name', 'starts_with', 'ab')])).toEqual(['abc'])
       expect(yield* matching([where('name', 'starts_with', 'ab', { mode: 'insensitive' })])).toEqual(['abc', 'ABC'])
       expect(yield* matching([where('name', 'eq', 'abc', { mode: 'insensitive' })])).toEqual(['abc', 'ABC'])
+    }),
+  )
+
+  it.effect('matches null in-list elements the way IS NULL does', () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      yield* sql`CREATE TABLE n (name text)`
+      yield* Effect.forEach(['a', 'b', null], (name) => sql`INSERT INTO n ${sql.insert({ name })}`, { discard: true })
+      const names = (conditions: ReadonlyArray<CleanedWhere>) =>
+        Effect.flatMap(Effect.fromOption(whereCondition(sql, 'sqlite', conditions)), (condition) =>
+          Effect.map(
+            sql<{ name: string | null }>`SELECT name FROM n WHERE ${condition} ORDER BY rowid`,
+            Array.map((row) => row.name),
+          ),
+        )
+      const withNull = ['a', null] as unknown as CleanedWhere['value']
+      expect(yield* names([where('name', 'in', withNull)])).toEqual(['a', null])
+      expect(yield* names([where('name', 'not_in', withNull)])).toEqual(['b'])
     }),
   )
 

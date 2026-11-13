@@ -143,6 +143,32 @@ const equality =
       Match.orElse(exactly),
     )
 
+interface InList {
+  readonly empty: '1 = 0' | '1 = 1'
+  readonly nullCheck: 'IS NULL' | 'IS NOT NULL'
+  readonly connector: 'OR' | 'AND'
+  readonly values: (condition: Condition, values: Array.NonEmptyReadonlyArray<unknown>) => Fragment
+}
+
+/** `IN` never matches NULL, and a NULL inside `NOT IN` makes it match nothing: nulls get their own clause. */
+const inList =
+  ({ empty, nullCheck, connector, values }: InList) =>
+  (condition: Condition): Fragment => {
+    const { sql, column } = condition
+    const all = list(condition)
+    const nulls = Option.liftPredicate(sql`${column} ${sql.literal(nullCheck)}`, () =>
+      Array.some(all, Predicate.isNull),
+    )
+    return Array.match(Array.filter(all, Predicate.isNotNull), {
+      onEmpty: () => Option.getOrElse(nulls, () => sql.literal(empty)),
+      onNonEmpty: (present) =>
+        Option.match(nulls, {
+          onNone: () => values(condition, present),
+          onSome: (isNull) => sql`(${values(condition, present)} ${sql.literal(connector)} ${isNull})`,
+        }),
+    })
+  }
+
 const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
   eq: equality('IS NULL', '=', (condition) => exact[condition.dialect].eq(condition)),
   ne: equality('IS NOT NULL', '<>', (condition) => exact[condition.dialect].ne(condition)),
@@ -150,22 +176,24 @@ const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
   lte: compare('<='),
   gt: compare('>'),
   gte: compare('>='),
-  in: (condition) =>
-    Array.match(list(condition), {
-      onEmpty: () => condition.sql`1 = 0`,
-      onNonEmpty: (values) =>
-        condition.insensitive
-          ? condition.sql`${lowered(condition)} IN ${loweredList(condition.sql, values)}`
-          : exact[condition.dialect].in(condition, values),
-    }),
-  not_in: (condition) =>
-    Array.match(list(condition), {
-      onEmpty: () => condition.sql`1 = 1`,
-      onNonEmpty: (values) =>
-        condition.insensitive
-          ? condition.sql`${lowered(condition)} NOT IN ${loweredList(condition.sql, values)}`
-          : exact[condition.dialect].not_in(condition, values),
-    }),
+  in: inList({
+    empty: '1 = 0',
+    nullCheck: 'IS NULL',
+    connector: 'OR',
+    values: (condition, values) =>
+      condition.insensitive
+        ? condition.sql`${lowered(condition)} IN ${loweredList(condition.sql, values)}`
+        : exact[condition.dialect].in(condition, values),
+  }),
+  not_in: inList({
+    empty: '1 = 1',
+    nullCheck: 'IS NOT NULL',
+    connector: 'AND',
+    values: (condition, values) =>
+      condition.insensitive
+        ? condition.sql`${lowered(condition)} NOT IN ${loweredList(condition.sql, values)}`
+        : exact[condition.dialect].not_in(condition, values),
+  }),
   contains: patternMatch({ before: true, after: true }),
   starts_with: patternMatch({ before: false, after: true }),
   ends_with: patternMatch({ before: true, after: false }),

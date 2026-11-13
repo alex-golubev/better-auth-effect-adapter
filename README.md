@@ -262,7 +262,7 @@ Queries per call, as measured with this adapter:
   ```
 
 - **No `RETURNING`.** The adapter reads a written row back by its id. `update`, `consumeOne` and `incrementOne` first lock the matching rows with `SELECT … FOR UPDATE` inside a transaction, which becomes a savepoint inside yours.
-- **Case.** Case-sensitive comparisons (the default `mode`) bind the value with `COLLATE utf8mb4_bin`, so they distinguish case with any column collation and still use the column's index. `mode: 'insensitive'` compares with `LOWER()`.
+- **Case.** Case-sensitive comparisons (the default `mode`) bind the value with `COLLATE utf8mb4_bin`, so they distinguish case with any column collation and still use the column's index. `mode: 'insensitive'` compares with `LOWER()`. The connection needs the `utf8mb4` character set, which is mysql2's default.
 - **Schema changes on a running app.** MySQL is worse than PostgreSQL here. After a table is recreated with different column types, cached prepared statements can silently read nothing. Restart the app after such migrations, or use `disablePreparedStatements: true`.
 - **Dates** are `datetime(3)`, which has no year-2038 limit.
 

@@ -46,7 +46,7 @@ Then:
   - Better Auth's own transactions become savepoints inside yours.
   - A rejected call fails with `AuthCallError`, whose `cause` is the rejection (e.g. Better Auth's `APIError`).
 - **Better Auth transactions** run in `sql.withTransaction`. When the callback fails, Better Auth gets its own error (such as an `APIError`) back after the rollback.
-- **`consumeOne` and `incrementOne`** run as a single statement on PostgreSQL and SQLite, and with row locks inside a transaction on MySQL. Their conditions hold under concurrent requests, which Better Auth's database rate limiter relies on.
+- **`consumeOne` and `incrementOne`** run as a single statement on PostgreSQL and SQLite, and with row locks inside a transaction on MySQL. Their conditions hold under concurrent requests, which Better Auth's database rate limiter relies on. `incrementOne` counts a NULL counter as 0, as Better Auth's own fallback does.
 - **Joins** (`advanced.database.joins: true`) take one `IN` query per joined table, instead of a query per row, with the per-parent limit applied in SQL.
 - **Schema generation.** `npx auth generate` now produces the SQL schema:
   - for SQLite, PostgreSQL and MySQL;

@@ -106,6 +106,21 @@ layer(Sqlite, { buildPerTest: true })('adapter on SQLite', (it) => {
     }),
   )
 
+  it.effect('keeps working after a transaction that make ran in has ended', () =>
+    Effect.gen(function* () {
+      yield* adapterWithSchema({})
+      const sql = yield* SqlClient.SqlClient
+      const adapter = (yield* sql.withTransaction(make()))({})
+      const created = yield* Effect.promise(() =>
+        adapter.create<{ name: string; email: string }>({
+          model: 'user',
+          data: { name: 'Later', email: 'later@example.com' },
+        }),
+      )
+      expect(created.name).toBe('Later')
+    }),
+  )
+
   it.effect('fails run with AuthCallError, keeping the rejection as its cause', () =>
     Effect.gen(function* () {
       const rejection = { code: 'REJECTED' }
@@ -231,6 +246,7 @@ layer(Sqlite, { buildPerTest: true })('native operations on SQLite', (it) => {
         adapter.findMany<{ session: ReadonlyArray<unknown> }>({ model: 'user', join: { session: true } }),
       )
       expect(found.statements).toHaveLength(2)
+      expect(found.statements[0]).toMatch(/LIMIT \?/)
       expect(Array.map(found.result, (user) => user.session.length)).toEqual([2, 2, 2])
       const limited = yield* traced(() =>
         adapter.findMany<{ session: ReadonlyArray<unknown> }>({ model: 'user', join: { session: { limit: 1 } } }),
