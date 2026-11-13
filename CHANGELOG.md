@@ -30,9 +30,11 @@ const auth = betterAuth({ database: effectSqlAdapter({ runtime: rt, dialect: 'pg
 const database = yield* EffectSqlAdapter.make()
 const auth = betterAuth({ database })
 
-// 1.0, outside Effect
-const auth = betterAuth({ database: EffectSqlAdapter.fromContext(await runtime.context()) })
+// 1.0, synchronously, from a Context that holds a SqlClient
+const auth = betterAuth({ database: EffectSqlAdapter.fromContext(context) })
 ```
+
+In a Promise application, run the layer that builds auth on a `ManagedRuntime`; see the README.
 
 Then:
 

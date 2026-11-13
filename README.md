@@ -82,31 +82,29 @@ If the insert fails, the new user is rolled back with it.
 
 ### In a Promise application (Next.js and others)
 
-Capture a context from a `ManagedRuntime`, and run your own database code on the same runtime:
+Run `AppLive` from the Effect example above on a `ManagedRuntime`, and call auth and your own code through it. The runtime builds the layers on the first call, so loading the module waits for nothing:
 
 ```ts
-import { PgClient } from '@effect/sql-pg'
-import { betterAuth } from 'better-auth'
 import { toNextJsHandler } from 'better-auth/next-js'
-import { EffectSqlAdapter } from 'better-auth-effect'
-import { Effect, ManagedRuntime, Redacted } from 'effect'
+import { Effect, ManagedRuntime } from 'effect'
 import { SqlClient } from 'effect/sql'
+import { AppLive, Auth } from './auth'
 
-const runtime = ManagedRuntime.make(PgClient.layer({ url: Redacted.make(process.env.DATABASE_URL ?? '') }))
+const runtime = ManagedRuntime.make(AppLive)
 
-export const auth = betterAuth({
-  database: EffectSqlAdapter.fromContext(await runtime.context()),
-  emailAndPassword: { enabled: true },
-})
+export const { GET, POST } = toNextJsHandler((request) =>
+  runtime.runPromise(Effect.flatMap(Auth, (auth) => Effect.promise(() => auth.handler(request)))),
+)
 
-export const { GET, POST } = toNextJsHandler(auth)
+export const getSession = (headers: Headers) =>
+  runtime.runPromise(Effect.flatMap(Auth, (auth) => auth.use((api) => api.getSession({ headers }))))
 
 // App code runs on the same runtime, so on the same pool.
 export const countUsers = () =>
   runtime.runPromise(Effect.flatMap(SqlClient.SqlClient, (sql) => sql`SELECT COUNT(*) AS n FROM "user"`))
 ```
 
-`fromContext` is the synchronous form of `make`. It throws `EffectSqlAdapterError` when the client's dialect isn't supported.
+With a `Context` that already holds a `SqlClient`, `EffectSqlAdapter.fromContext(context)` creates the adapter synchronously. It throws `EffectSqlAdapterError` when the client's dialect isn't supported.
 
 ### Mounting the handler on an Effect HTTP router
 
@@ -201,13 +199,13 @@ There are two ways to use different column names:
 
 ```ts
 import { PgClient } from '@effect/sql-pg'
-import { Redacted, String as Str } from 'effect'
+import { Config, String } from 'effect'
 
-const SqlLive = PgClient.layer({
-  url: Redacted.make(process.env.DATABASE_URL ?? ''),
-  transformQueryNames: Str.camelToSnake,
-  transformResultNames: Str.snakeToCamel,
-  transformJson: false,
+const SqlLive = PgClient.layerConfig({
+  url: Config.Redacted('DATABASE_URL'),
+  transformQueryNames: Config.succeed(String.camelToSnake),
+  transformResultNames: Config.succeed(String.snakeToCamel),
+  transformJson: Config.succeed(false),
 })
 ```
 
