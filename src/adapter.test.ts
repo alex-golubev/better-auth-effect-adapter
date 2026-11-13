@@ -16,16 +16,12 @@ const unsupportedContext = Context.make(SqlClient.SqlClient, unsupportedClient)
 
 const Sqlite = SqliteClient.layer({ filename: ':memory:' })
 
-/** A rejection of one of the adapter's Promise methods, kept as is. */
 class Rejected extends Data.TaggedError('Rejected')<{ readonly cause: unknown }> {}
 
-/** Statements of a generated schema script. */
 const statementsOf = (code: string) => code.split(';').filter((statement) => statement.trim() !== '')
 
-/** The adapter better-auth would build for `options` on the SqlClient in context. */
 const adapterFor = (options: BetterAuthOptions) => Effect.map(make(), (adapter) => adapter(options))
 
-/** That adapter, with the schema it generates for `options` applied to the database. */
 const adapterWithSchema = (options: BetterAuthOptions) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -58,13 +54,12 @@ describe('fromContext', () => {
     }).pipe(Effect.provide(Sqlite)),
   )
 
-  // fromContext is the synchronous, throwing entry point for apps outside Effect.
+  // fromContext throws: it serves apps outside Effect.
   it('throws the EffectSqlAdapterError itself on an unsupported dialect', () => {
     expect(() => fromContext(unsupportedContext)).toThrow(EffectSqlAdapterError)
   })
 })
 
-// A fresh database per test.
 layer(Sqlite, { buildPerTest: true })('adapter on SQLite', (it) => {
   it.effect('generates the schema for `npx auth generate`', () =>
     Effect.gen(function* () {
@@ -108,10 +103,6 @@ describe('adapter with name transforms', () => {
   )
 })
 
-/**
- * An adapter whose statements are recorded, on a database with the schema for `options`,
- * and `traced`, which runs one adapter call and returns its result with the statements it issued.
- */
 const recorded = (options: BetterAuthOptions) =>
   Effect.gen(function* () {
     const log = yield* Ref.make<ReadonlyArray<string>>([])

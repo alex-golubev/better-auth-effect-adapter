@@ -26,17 +26,16 @@ export interface EffectSqlAdapterOptions {
 
 export type EffectSqlAdapter = (options: BetterAuthOptions) => DBAdapter<BetterAuthOptions>
 
-/** Runs an adapter effect and hands the result to better-auth's Promise interface. */
 type Runner = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) => Promise<A>
 
 type AdapterHelpers = Parameters<AdapterFactoryCustomizeAdapterCreator>[0]
 
 type Transaction = <R>(callback: (trx: DBTransactionAdapter) => Promise<R>) => Promise<R>
 
-/** Where `npx auth generate` writes the schema when no `--output` is given. */
+/** Used by `npx auth generate` without `--output`. */
 const DEFAULT_SCHEMA_FILE = 'better-auth-schema.sql'
 
-/** The factory's method signatures are generic over the row type; rows come from the database untyped. */
+/** The factory's methods are generic over the row type; database rows are untyped. */
 const rows = <T>(promise: Promise<unknown>): Promise<T> => promise as Promise<T>
 
 const withJoins =
@@ -57,7 +56,7 @@ const createCustomAdapter =
     const withSql = <A, E>(f: (sql: SqlClient.SqlClient) => Effect.Effect<A, E, SqlClient.SqlClient>) =>
       run(Effect.flatMap(SqlClient.SqlClient, f))
 
-    // `select` and `sortBy` arrive as logical field names; where fields and data keys are already physical.
+    // Only `select` and `sortBy` arrive as logical field names.
     const column = (model: string, field: string) =>
       Effect.try({
         try: () => getFieldName({ model, field }),
@@ -142,14 +141,9 @@ const createCustomAdapter =
     }
   }
 
-/** A rejection of better-auth's transaction callback, handed back to it unchanged after the rollback. */
 class CallbackRejected extends Data.TaggedError('CallbackRejected')<{ readonly cause: unknown }> {}
 
-/**
- * Runs `evaluate` inside `sql.withTransaction` on the ambient context. Inside an app
- * transaction (bridged with `run`) this becomes a savepoint on the app's connection.
- * Adapter calls made by `evaluate` see the transaction through the bridged context.
- */
+/** A savepoint inside an app transaction. The callback's adapter calls see it only through `withContext`. */
 const inTransaction = <A>(
   evaluate: () => PromiseLike<A>,
 ): Effect.Effect<A, CallbackRejected | SqlError.SqlError, SqlClient.SqlClient> =>
@@ -183,12 +177,12 @@ const buildAdapter = (
       adapter: createCustomAdapter(runner, dialect),
     })
   return (authOptions) => {
-    // Better-auth's own transactions; nesting is handled by better-auth (it reuses an open one).
+    // better-auth never nests transactions, so the callback's adapter needs none.
     const transactional = factory(false)(authOptions)
     const transaction: Transaction = (callback) =>
       runner(
         inTransaction(() => callback(transactional)).pipe(
-          // Better-auth (and its callers) expect the callback's own error, e.g. an APIError.
+          // better-auth expects the callback's own error back, e.g. an APIError.
           Effect.catchTag('CallbackRejected', (rejected) => Effect.fail(rejected.cause)),
         ),
       )
@@ -196,7 +190,7 @@ const buildAdapter = (
   }
 }
 
-/** Creates the adapter from the current Effect context. Fails on unsupported dialects. */
+/** The adapter for the SqlClient in context. Fails on unsupported dialects. */
 export const make = (
   options: EffectSqlAdapterOptions = {},
 ): Effect.Effect<EffectSqlAdapter, EffectSqlAdapterError, SqlClient.SqlClient> =>
@@ -214,11 +208,7 @@ export const make = (
     return buildAdapter(context, dialect, options)
   })
 
-/**
- * Synchronous variant for apps without Effect layers, from a captured context such as
- * `await ManagedRuntime.make(PgClient.layer(...)).context()`.
- * Throws `EffectSqlAdapterError` on unsupported dialects.
- */
+/** `make` for apps outside Effect, e.g. with `await runtime.context()`. Throws on unsupported dialects. */
 export const fromContext = (
   context: Context.Context<SqlClient.SqlClient>,
   options: EffectSqlAdapterOptions = {},

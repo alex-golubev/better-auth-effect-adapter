@@ -1,13 +1,9 @@
 import { Option } from 'effect'
 import type { SqlClient } from 'effect/sql'
 
-/** SQL dialects the adapter supports. */
 export type Dialect = 'sqlite' | 'pg' | 'mysql'
 
-/**
- * Detects the dialect from the SqlClient itself, so users never pass it explicitly.
- * `None` for dialects the adapter does not support (mssql, clickhouse).
- */
+/** From the client, so users never pass it. */
 export const detectDialect = (sql: SqlClient.SqlClient): Option.Option<Dialect> =>
   sql.onDialectOrElse({
     sqlite: () => Option.some<Dialect>('sqlite'),
@@ -16,16 +12,13 @@ export const detectDialect = (sql: SqlClient.SqlClient): Option.Option<Dialect> 
     orElse: () => Option.none(),
   })
 
-/**
- * What each driver binds and returns natively. These are better-auth's factory flags:
- * whatever is `false` the factory converts (Date ↔ ISO string, boolean ↔ 0/1, JSON ↔ string).
- */
+/** better-auth's factory flags: what is `false`, the factory converts (Date ↔ string, boolean ↔ 0/1, JSON). */
 export interface DialectProfile {
   readonly supportsDates: boolean
   readonly supportsBooleans: boolean
   readonly supportsJSON: boolean
   readonly supportsArrays: boolean
-  /** The database generates uuid ids itself (`DEFAULT gen_random_uuid()`). */
+  /** The database generates uuid ids. */
   readonly supportsUUIDs: boolean
 }
 
@@ -38,7 +31,7 @@ export const dialectProfiles: Record<Dialect, DialectProfile> = {
     supportsArrays: false,
     supportsUUIDs: false,
   },
-  // Plain objects can't be bound as parameters; jsonb comes back parsed, which the factory passes through.
+  // Plain objects can't be bound; parsed jsonb passes through the factory as is.
   pg: {
     supportsDates: true,
     supportsBooleans: true,

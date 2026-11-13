@@ -3,7 +3,7 @@ import type { SqlClient, SqlError, Statement } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { EffectSqlAdapterError } from './errors'
 
-/** A row keyed by physical column names, as better-auth's factory expects it back. */
+/** Keyed by physical column names, as the factory expects. */
 export type Row = Record<string, unknown>
 
 type Fragment = Statement.Fragment
@@ -16,7 +16,7 @@ export interface Sort {
 
 export interface Read {
   readonly table: string
-  /** Physical column names; empty selects every column. */
+  /** Physical names; empty selects all. */
   readonly columns: ReadonlyArray<string>
   readonly where: Option.Option<Fragment>
 }
@@ -28,9 +28,6 @@ export interface Page {
 }
 
 const adapterError = (message: string) => new EffectSqlAdapterError({ message })
-
-// ---------------------------------------------------------------------------
-// Fragments
 
 const empty = (sql: SqlClient.SqlClient): Fragment => sql.literal('')
 
@@ -58,7 +55,7 @@ const nonNegativeInteger = (name: string, value: number): Effect.Effect<number, 
     ),
   )
 
-/** Inlined as literals (validated integers): mysql2 can't bind LIMIT/OFFSET parameters. */
+/** Validated literals: mysql2 can't bind LIMIT/OFFSET. */
 const pageSql = (
   sql: SqlClient.SqlClient,
   { sort, limit, offset }: Page,
@@ -72,10 +69,7 @@ const pageSql = (
     return sql`${orderBySql(sql, sort)} LIMIT ${sql.literal(String(rows))} ${skip}`
   })
 
-// ---------------------------------------------------------------------------
-// Raw execution and affected rows
-
-/** `.raw` skips `transformQueryNames`; compiling first keeps identifier transforms. */
+/** `.raw` skips `transformQueryNames`, so compile first. */
 const executeRaw = (sql: SqlClient.SqlClient, statement: Statement.Statement<Row>) =>
   Effect.flatMap(
     Effect.sync(() => statement.compile()),
@@ -96,9 +90,6 @@ const affectedRows =
       Effect.mapError(() => adapterError(`The ${dialect} driver did not report affected rows`)),
     )
 
-// ---------------------------------------------------------------------------
-// RETURNING strategies
-
 interface Returning {
   readonly insert: (sql: SqlClient.SqlClient, table: string, data: Row) => Operation<Row>
   readonly update: (
@@ -107,9 +98,8 @@ interface Returning {
     where: Option.Option<Fragment>,
     data: Row,
   ) => Operation<Row | null>
-  /** Deletes at most one matching row and returns it. */
+  /** Deletes at most one matching row. */
   readonly consume: (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>) => Operation<Row | null>
-  /** Applies `assignments` to at most one matching row and returns it. */
   readonly modifyOne: (
     sql: SqlClient.SqlClient,
     table: string,
@@ -118,7 +108,7 @@ interface Returning {
   ) => Operation<Row | null>
 }
 
-/** `id IN (first matching id)`: a single statement touches at most one row, atomically. */
+/** At most one row, atomically, in a single statement. */
 const firstMatch = (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>): Fragment =>
   sql`${sql('id')} IN (SELECT ${sql('id')} FROM ${sql(table)} ${whereSql(sql, where)} LIMIT 1)`
 
@@ -150,7 +140,6 @@ const byId = (sql: SqlClient.SqlClient, table: string, id: unknown): Operation<R
     Option.getOrNull(Arr.head(rows)),
   )
 
-/** Matching rows, locked until the surrounding transaction ends. */
 const lockMatching = (
   sql: SqlClient.SqlClient,
   table: string,
@@ -158,7 +147,6 @@ const lockMatching = (
   { columns, limit }: { readonly columns: Fragment; readonly limit: Fragment },
 ) => sql<Row>`SELECT ${columns} FROM ${sql(table)} ${whereSql(sql, where)} ${limit} FOR UPDATE`
 
-/** The id of an inserted row: the one better-auth generated, else the auto-increment value. */
 const insertedId = (data: Row, raw: unknown): Effect.Effect<unknown, EffectSqlAdapterError> =>
   pipe(
     Option.fromNullishOr(data.id),
@@ -166,7 +154,7 @@ const insertedId = (data: Row, raw: unknown): Effect.Effect<unknown, EffectSqlAd
       pipe(
         Option.liftPredicate(raw, Predicate.hasProperty('insertId')),
         Option.map((result) => result.insertId),
-        // mysql2 reports 0 when the table has no auto-increment column; large ids arrive as strings.
+        // 0 means no auto-increment column; large ids arrive as strings.
         Option.filter(
           (id) => (Predicate.isNumber(id) || Predicate.isBigInt(id) || Predicate.isString(id)) && Number(id) > 0,
         ),
@@ -177,12 +165,11 @@ const insertedId = (data: Row, raw: unknown): Effect.Effect<unknown, EffectSqlAd
   )
 
 /**
- * MySQL has no RETURNING. Rows are read back by id; statements that pick rows by a condition
- * lock them first (`SELECT … FOR UPDATE`) inside a transaction, which inside an app transaction
- * is a savepoint. MySQL can't `LIMIT` an `IN` subquery, so `firstMatch` doesn't apply here.
+ * No RETURNING: rows are read back by id. Rows picked by a condition are locked first (`FOR UPDATE`),
+ * so a concurrent call can't take them. MySQL can't `LIMIT` an `IN` subquery, so no `firstMatch`.
  */
 const mysqlReturning: Returning = {
-  // The insert is atomic on its own and its id is known, so no transaction is needed.
+  // Atomic on its own, with a known id: no transaction needed.
   insert: (sql, table, data) =>
     Effect.gen(function* () {
       const raw = yield* executeRaw(sql, sql<Row>`INSERT INTO ${sql(table)} ${sql.insert(data)}`)
@@ -241,9 +228,6 @@ const returning: Record<Dialect, Returning> = {
   pg: nativeReturning,
   mysql: mysqlReturning,
 }
-
-// ---------------------------------------------------------------------------
-// Operations
 
 export const create = (sql: SqlClient.SqlClient, dialect: Dialect, table: string, data: Row): Operation<Row> =>
   returning[dialect].insert(sql, table, data)
@@ -312,7 +296,6 @@ export const consumeOne = (
   where: Option.Option<Fragment>,
 ): Operation<Row | null> => returning[dialect].consume(sql, table, where)
 
-/** `col = col + n` for each increment, `col = value` for each `set` entry. */
 const assignments = (sql: SqlClient.SqlClient, increment: Record<string, number>, set: Row): Fragment =>
   sql.join(
     ', ',

@@ -12,16 +12,11 @@ import { type Dialect, detectDialect } from '../src/dialect'
 import { EffectSqlAdapterError } from '../src/errors'
 import { clientNames, idStrategyOf, schemaStatements } from '../src/schema'
 
-/** A database the integration tests run against: its SqlClient, released with the layer. */
 export type Database = Layer.Layer<SqlClient.SqlClient, unknown>
 
-/**
- * Shares `database` between the tests of a block (`@effect/vitest`'s `layer`). The tests
- * keep the live clock: their timeouts must really fire, and the drivers keep real time.
- */
+/** `layer` with the live clock: `TestClock` would freeze timeouts and driver timers. */
 export const withDatabase = <R, E>(database: Layer.Layer<R, E>) => layer(database, { excludeTestServices: true })
 
-/** The dialect of the SqlClient in context. */
 export const dialectOf: Effect.Effect<Dialect, EffectSqlAdapterError, SqlClient.SqlClient> = Effect.flatMap(
   SqlClient.SqlClient,
   (sql) =>
@@ -49,7 +44,7 @@ const dropAllTables: Record<Dialect, Effect.Effect<void, unknown, SqlClient.SqlC
     yield* sql`DROP SCHEMA IF EXISTS public CASCADE`
     yield* sql`CREATE SCHEMA public`
   }),
-  // FOREIGN_KEY_CHECKS is per session, so everything runs on one pinned connection.
+  // FOREIGN_KEY_CHECKS is per session: one pinned connection.
   mysql: Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql.withTransaction(
@@ -65,10 +60,6 @@ const dropAllTables: Record<Dialect, Effect.Effect<void, unknown, SqlClient.SqlC
   }),
 }
 
-/**
- * Drops every table, then creates the schema for `options` with our DDL generator,
- * naming tables and columns as the client does (`transformQueryNames`).
- */
 export const resetSchema = (options: BetterAuthOptions): Effect.Effect<void, unknown, SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -82,12 +73,11 @@ export const resetSchema = (options: BetterAuthOptions): Effect.Effect<void, unk
     yield* Effect.forEach(statements, (statement) => sql.unsafe(statement), { discard: true })
   })
 
-/** A started testcontainers container, stopped when the scope (the layer using it) closes. */
 const container = <C extends { readonly stop: () => Promise<unknown> }>(start: () => Promise<C>) =>
   Effect.acquireRelease(Effect.promise(start), (started) => Effect.promise(() => started.stop()))
 
 export interface SqliteOptions {
-  /** snake_case columns through the client's `transformQueryNames` / `transformResultNames`. */
+  /** Through the client's name transforms, not better-auth's `fields`. */
   readonly snakeCase?: boolean
 }
 
@@ -100,13 +90,8 @@ export const sqliteDatabase = ({ snakeCase = false }: SqliteOptions = {}): Datab
 export interface DatabaseOptions {
   readonly maxConnections?: number
   /**
-   * Server-side prepared statements, on by default as in both drivers. Turn them off for
-   * tests that recreate tables with different column types (text/integer/uuid ids) on one
-   * pool: the drivers cache statements per connection by SQL text, and a cached statement
-   * outlives the table it was prepared for. PostgreSQL then fails with "operator does not
-   * exist: uuid = text"; MySQL 8.4 uses stale column types, so inserts fail ("Data too long")
-   * and reads compare as numbers and silently match nothing, on whichever pooled connection
-   * still holds the old statement.
+   * Off for tests that recreate tables with other column types on one pool: cached statements
+   * outlive the table (PostgreSQL errors, MySQL 8.4 silently reads nothing).
    */
   readonly preparedStatements?: boolean
 }
@@ -127,11 +112,7 @@ export const postgresDatabase = ({ maxConnections, preparedStatements = true }: 
     ),
   )
 
-/**
- * mysql2 reads and writes `Date` values in the process's local time zone unless told
- * otherwise, so timestamps shift whenever TZ differs between writes and reads. `MysqlClient`
- * ignores `poolConfig` when given a `url`, so the option goes into the URL.
- */
+/** mysql2 uses local time for `Date` by default; `MysqlClient` ignores `poolConfig` next to a `url`. */
 const utcMysqlUrl = (uri: string): string => `${uri}${new URL(uri).search === '' ? '?' : '&'}timezone=Z`
 
 export const mysqlDatabase = ({ maxConnections, preparedStatements = true }: DatabaseOptions = {}): Database =>

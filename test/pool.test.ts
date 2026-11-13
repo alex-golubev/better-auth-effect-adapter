@@ -1,8 +1,6 @@
 /**
- * The adapter runs on the app's SqlClient, so auth traffic shares the app's pool instead of
- * opening connections of its own. With a pool of one connection, concurrent app queries and
- * auth calls (whose transactions reserve that connection) must neither deadlock nor make
- * PostgreSQL see a second client connection.
+ * Auth must share the app's pool. With one connection, concurrent app and auth work must
+ * neither deadlock nor open a second connection.
  */
 import { expect } from '@effect/vitest'
 import { Array as Arr, Effect, Layer } from 'effect'

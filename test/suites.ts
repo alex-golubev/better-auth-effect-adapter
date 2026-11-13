@@ -13,15 +13,10 @@ import { fromContext } from '../src/adapter'
 import { type Database, dialectOf, resetSchema } from './harness'
 
 export interface SuiteOptions {
-  /** Tests (by name) to skip in every suite. */
   readonly disableTests?: Readonly<Record<string, boolean>>
 }
 
-/**
- * Runs every official `@better-auth/test-utils` adapter suite against `database`.
- * The suites drive Vitest themselves through a Promise API, so the database runs on a
- * `ManagedRuntime` here instead of an `@effect/vitest` layer.
- */
+/** The suites drive Vitest through a Promise API, hence a `ManagedRuntime` rather than a `layer`. */
 export const runOfficialSuites = async (
   database: Database,
   { disableTests = {} }: SuiteOptions = {},

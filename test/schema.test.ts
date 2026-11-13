@@ -19,7 +19,7 @@ import {
 const generateId = (idStrategy: IdStrategy): BetterAuthOptions['advanced'] =>
   idStrategy === 'string' ? {} : { database: { generateId: idStrategy } }
 
-/** Covers the schema shapes the official adapter test suites migrate to. */
+/** The schema shapes the official suites migrate to. */
 const kitchenSink = (idStrategy: IdStrategy): BetterAuthOptions => ({
   advanced: generateId(idStrategy),
   user: {
@@ -72,7 +72,7 @@ const expectIdShape: Record<IdStrategy, (id: unknown) => void> = {
   uuid: (id) => expect(String(id)).toMatch(/^[0-9a-f-]{36}$/),
 }
 
-// Each test recreates the tables with another id type on the same pool (see `preparedStatements`).
+// Each test recreates tables with another id type (see `preparedStatements`).
 const databases: ReadonlyArray<readonly [string, Database]> = [
   ['sqlite', sqliteDatabase()],
   ['pg', postgresDatabase({ preparedStatements: false })],
@@ -91,7 +91,7 @@ describe.each(databases)('generated schema on %s', (_, database) => {
         const sql = yield* SqlClient.SqlClient
         const dialect = yield* dialectOf
         const now = toSqlValue(dialectProfiles[dialect])(new Date())
-        // Who generates the id: the app for string ids (and uuid outside PostgreSQL), the database otherwise.
+        // The app generates string ids, and uuids outside PostgreSQL; the database the rest.
         const appId = (value: string) =>
           idStrategy === 'string'
             ? { id: value }

@@ -1,8 +1,6 @@
 /**
- * GitHub issue #4: better-auth calls inside an app's `sql.withTransaction` froze on SQLite
- * (the adapter waited for the connection the transaction held) and escaped the transaction
- * on pooled databases. `EffectSqlAdapter.run` / `bind` carry the transaction to the adapter.
- * On PostgreSQL and MySQL the rollback tests are the ones that catch the escape.
+ * Issue #4: auth calls inside an app's `sql.withTransaction` froze SQLite and escaped the
+ * transaction on pooled databases, where only the rollback tests catch it.
  */
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { describe, expect } from '@effect/vitest'
@@ -32,7 +30,6 @@ const rowsIn = (table: string, where: { readonly column: string; readonly value:
 
 const usersWith = (email: string) => rowsIn('user', { column: 'email', value: email })
 
-/** A write of the app's own, next to auth's. */
 const appWrite = (identifier: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -47,7 +44,7 @@ const appWrite = (identifier: string) =>
     })}`
   })
 
-/** Runs `body` in an app transaction; fails fast instead of hanging if the deadlock ever comes back. */
+/** If the deadlock comes back, this fails instead of hanging. */
 const inAppTransaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   Effect.exit(
     Effect.timeout(
@@ -128,7 +125,7 @@ describe.each(databases)('issue #4: auth calls inside an app transaction (%s)', 
       Effect.gen(function* () {
         yield* resetSchema(authOptions)
         const auth = yield* Auth
-        // Another database, without the auth tables: auth queries must not end up there.
+        // Another database, without auth tables: auth queries must not go there.
         yield* run(() => auth.api.signUpEmail({ body: signUpBody('other@example.com') })).pipe(
           Effect.provide(SqliteClient.layer({ filename: ':memory:' })),
         )

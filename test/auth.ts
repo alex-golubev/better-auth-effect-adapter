@@ -10,7 +10,7 @@ export const authOptions = {
   telemetry: { enabled: false },
 } satisfies BetterAuthOptions
 
-/** better-auth on the SqlClient in context, built the way the README tells apps to build it. */
+/** Built as the README shows, so the tests cover that path. */
 export class Auth extends Context.Service<Auth>()('test/Auth', {
   make: Effect.map(make(), (database) => betterAuth({ ...authOptions, database })),
 }) {

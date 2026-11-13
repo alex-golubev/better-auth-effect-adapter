@@ -74,7 +74,7 @@ describe('schemaStatements', () => {
       expect(sql).toContain('CREATE TABLE `user_custom`')
       expect(sql).toContain('`email_address` varchar(255) NOT NULL UNIQUE')
       expect(sql).toContain('FOREIGN KEY (`userId`) REFERENCES `user_custom` (`id`) ON DELETE CASCADE')
-      // A reference to a non-id column keeps the string type even with serial ids.
+      // A non-id reference stays a string, even with serial ids.
       expect(sql).toContain('`one_to_one` varchar(255) NOT NULL UNIQUE')
       expect(sql).toContain('FOREIGN KEY (`one_to_one`) REFERENCES `user_custom` (`email_address`) ON DELETE CASCADE')
     }),
@@ -282,7 +282,7 @@ describe('schemaStatements', () => {
     }),
   )
 
-  // getAuthTables validates indexes itself; createSchema may receive tables from elsewhere.
+  // getAuthTables validates indexes, but createSchema may get tables from elsewhere.
   it.effect('fails with EffectSqlAdapterError on indexes over unknown or non-indexable fields', () =>
     Effect.gen(function* () {
       const errorFor = (fields: [string, ...Array<string>]) =>

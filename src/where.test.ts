@@ -15,7 +15,7 @@ const where = (
 
 const Sqlite = SqliteClient.layer({ filename: ':memory:' })
 
-/** Compiles `SELECT * FROM "t" WHERE …` (identifiers and placeholders as SQLite renders them). */
+/** Compiled by SQLite for every dialect, hence SQLite quoting and placeholders. */
 const compile = (dialect: Dialect, conditions: ReadonlyArray<CleanedWhere>) =>
   Effect.map(SqlClient.SqlClient, (sql) =>
     Option.match(whereCondition(sql, dialect, conditions), {
@@ -166,7 +166,6 @@ describe('toSqlValue', () => {
 
 const names = ['abc', 'ABC', '50%_off', '50 off', 'a*b', 'axb']
 
-/** A table `t` with one row per name. */
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
   yield* sql`CREATE TABLE t (name text, flag integer, at text)`
@@ -178,7 +177,6 @@ const seed = Effect.gen(function* () {
   )
 })
 
-/** The names of the rows of `t` that `conditions` select. */
 const matching = (conditions: ReadonlyArray<CleanedWhere>) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -189,7 +187,7 @@ const matching = (conditions: ReadonlyArray<CleanedWhere>) =>
     return rows.map((row) => row.name)
   })
 
-// A fresh database per test: each one seeds the same table.
+// Per test: each test seeds the same table.
 layer(Sqlite, { buildPerTest: true })('whereCondition: behavior on SQLite', (it) => {
   it.effect('matches LIKE wildcards literally', () =>
     Effect.gen(function* () {

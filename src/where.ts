@@ -13,10 +13,7 @@ interface Condition {
   readonly insensitive: boolean
 }
 
-/**
- * The factory converts single where values according to the dialect profile,
- * but leaves the elements of `in`/`not_in` arrays untouched.
- */
+/** The factory converts single where values, but not the elements of `in`/`not_in` arrays. */
 export const toSqlValue =
   (profile: DialectProfile) =>
   (value: unknown): unknown =>
@@ -36,19 +33,12 @@ const list = (condition: Condition): ReadonlyArray<unknown> =>
 
 const lowered = ({ sql, column }: Condition): Fragment => sql`LOWER(${column})`
 
-/** `(LOWER(?), LOWER(?), …)`: lowercases on the database side, consistently with `LOWER(column)`. */
+/** Lowercased by the database, like `LOWER(column)`. */
 const loweredList = (sql: SqlClient.SqlClient, values: Arr.NonEmptyReadonlyArray<unknown>): Fragment =>
-  // `sql.join` only parenthesizes two or more clauses; `IN LOWER(?)` would parse as a table name.
+  // `sql.join` parenthesizes only 2+ items, and `IN LOWER(?)` parses as a table.
   sql`(${sql.join(', ', false)(Arr.map(values, (value) => sql`LOWER(${value})`))})`
 
-// ---------------------------------------------------------------------------
-// Exact comparison (mode "sensitive")
-
-/**
- * MySQL's default collations ignore case and accents, so a string is compared exactly
- * only when bound with a binary collation. The collation goes on the value rather than
- * the column: the value is always utf8mb4, whatever the column's character set is.
- */
+/** MySQL's default collations ignore case. The collation goes on the value: it is utf8mb4, the column may not be. */
 const binary = (sql: SqlClient.SqlClient, value: unknown): Fragment => sql`(${value} COLLATE utf8mb4_bin)`
 
 const binaryList = (sql: SqlClient.SqlClient, values: Arr.NonEmptyReadonlyArray<unknown>): Fragment =>
@@ -71,11 +61,7 @@ const plainExact: Exact = {
 
 const allStrings = (values: ReadonlyArray<unknown>): boolean => Arr.every(values, Predicate.isString)
 
-/**
- * `=` and `IN` keep the plain comparison as well: it is an exact lookup on the column's index
- * whatever the server can do with a comparison under another collation (MySQL 8.4 falls back to a
- * range scan of the index, `const` becomes `range`), and the binary comparison decides.
- */
+/** The plain `=`/`IN` keeps an exact index lookup; the binary comparison decides. */
 const mysqlExact: Exact = {
   eq: (condition) =>
     Predicate.isString(condition.value)
@@ -97,9 +83,6 @@ const mysqlExact: Exact = {
 
 const exact: Record<Dialect, Exact> = { sqlite: plainExact, pg: plainExact, mysql: mysqlExact }
 
-// ---------------------------------------------------------------------------
-// Pattern matching (contains / starts_with / ends_with)
-
 interface Wildcards {
   readonly before: boolean
   readonly after: boolean
@@ -107,11 +90,10 @@ interface Wildcards {
 
 const LIKE_ESCAPE = '!'
 
-/** Matches `%`, `_` and the escape character literally. */
 const likePattern = (value: string, { before, after }: Wildcards): string =>
   `${before ? '%' : ''}${value.replace(/[!%_]/g, `${LIKE_ESCAPE}$&`)}${after ? '%' : ''}`
 
-/** Matches `*`, `?` and `[` literally. */
+/** GLOB has no ESCAPE clause: `[*]` matches `*` literally. */
 const globPattern = (value: string, { before, after }: Wildcards): string =>
   `${before ? '*' : ''}${value.replace(/[[*?]/g, '[$&]')}${after ? '*' : ''}`
 
@@ -139,9 +121,6 @@ const patternMatch =
   (wildcards: Wildcards) =>
   (condition: Condition): Fragment =>
     (condition.insensitive ? insensitiveMatch : sensitiveMatch)[condition.dialect](condition, wildcards)
-
-// ---------------------------------------------------------------------------
-// Operators
 
 const compare =
   (operator: '<' | '<=' | '>' | '>=') =>
@@ -186,7 +165,7 @@ const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
   ends_with: patternMatch({ before: true, after: false }),
 }
 
-/** Case-insensitive matching only applies to strings (or arrays of strings). */
+/** `LOWER()` applies to strings only. */
 const isInsensitive = ({ mode, value }: CleanedWhere): boolean =>
   mode === 'insensitive' &&
   (Predicate.isString(value) || (Arr.isArray(value) && Arr.every(value as ReadonlyArray<unknown>, Predicate.isString)))
@@ -202,10 +181,7 @@ const toFragment =
       insensitive: isInsensitive(where),
     })
 
-/**
- * Builds the condition of a WHERE clause: `(AND conditions) AND (OR conditions)`,
- * the grouping better-auth's own adapters use. `None` when there are no conditions.
- */
+/** Grouped as `(AND …) AND (OR …)`, like better-auth's own adapters. */
 export const whereCondition = (
   sql: SqlClient.SqlClient,
   dialect: Dialect,

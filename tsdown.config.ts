@@ -5,7 +5,7 @@ export default defineConfig({
   format: 'esm',
   platform: 'node',
   target: 'node22',
-  // Declarations come from the library alone, not from the tests the main tsconfig includes.
+  // Declarations from the library only: the main tsconfig includes tests.
   tsconfig: 'tsconfig.build.json',
   dts: true,
   sourcemap: true,

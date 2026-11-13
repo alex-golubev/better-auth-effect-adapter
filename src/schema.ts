@@ -5,16 +5,12 @@ import type { SqlClient } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { EffectSqlAdapterError } from './errors'
 
-/** How primary keys are produced, derived from `advanced.database.generateId`. */
 export type IdStrategy = 'string' | 'serial' | 'uuid'
 
 export interface SchemaConfig {
   readonly dialect: Dialect
   readonly idStrategy: IdStrategy
-  /**
-   * Maps better-auth's table and column names to physical ones, the way the SqlClient's
-   * `transformQueryNames` maps them in queries (see `clientNames`). Identity by default.
-   */
+  /** The adapter passes `clientNames`; identity by default. */
   readonly rename?: (name: string) => string
 }
 
@@ -58,9 +54,6 @@ interface Table {
 
 const schemaError = (message: string): EffectSqlAdapterError => new EffectSqlAdapterError({ message })
 
-// ---------------------------------------------------------------------------
-// Dialect tables
-
 const quoteChars: Record<Dialect, string> = { sqlite: '"', pg: '"', mysql: '`' }
 
 const idColumnTypes: Record<Dialect, Record<IdStrategy, string>> = {
@@ -82,7 +75,6 @@ const idColumnTypes: Record<Dialect, Record<IdStrategy, string>> = {
   },
 }
 
-/** Type of a column referencing `id`. */
 const foreignKeyIdTypes: Record<Dialect, Record<IdStrategy, string>> = {
   sqlite: { string: 'text', serial: 'integer', uuid: 'text' },
   pg: { string: 'text', serial: 'integer', uuid: 'uuid' },
@@ -96,7 +88,7 @@ const scalarTypes: Record<Dialect, Record<ScalarKind, string>> = {
   mysql: { boolean: 'boolean', date: 'datetime(3)', json: 'json', 'string[]': 'json', 'number[]': 'json' },
 }
 
-/** Database default for date fields whose better-auth default is a function (`createdAt`, …). */
+/** Like better-auth's migrations, for dates with a function default (`createdAt`, …). */
 const timestampDefaults: Record<Dialect, Option.Option<string>> = {
   sqlite: Option.none(),
   pg: Option.some('DEFAULT CURRENT_TIMESTAMP'),
@@ -110,7 +102,6 @@ const quote =
     return `${char}${identifier.replaceAll(char, char + char)}${char}`
   }
 
-/** Reverses `quote`. */
 const unquote =
   (dialect: Dialect) =>
   (quoted: string): string => {
@@ -118,25 +109,17 @@ const unquote =
     return quoted.slice(1, -1).replaceAll(char + char, char)
   }
 
-/**
- * How `sql` names a table or column: its `transformQueryNames` applied, if it has one.
- * Generating the schema with it makes the DDL use the names the adapter's queries use.
- */
+/** Names as the client's queries render them. SqlClient doesn't expose `transformQueryNames`, hence the compile. */
 export const clientNames =
   (sql: SqlClient.SqlClient, dialect: Dialect) =>
   (name: string): string =>
     unquote(dialect)(sql`${sql(name)}`.compile()[0])
-
-// ---------------------------------------------------------------------------
-// Index naming. Mirrors better-auth's own migration naming, so schemas from
-// here and from `getMigrations` (kysely) use the same index names.
 
 const MAX_INDEX_NAME_BYTES = 63
 const INDEX_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 const utf8Length = (value: string): number => new TextEncoder().encode(value).length
 
-/** Longest prefix of `value` (by code points) that fits into `maxBytes` UTF-8 bytes. */
 const truncateUtf8 = (value: string, maxBytes: number): string =>
   pipe(
     Arr.fromIterable(value),
@@ -154,6 +137,7 @@ const stableHash = (value: string): string =>
     (hash) => (hash >>> 0).toString(16).padStart(8, '0'),
   )
 
+/** Same names as better-auth's own migrations. */
 const generatedIndexName = (table: string, columns: ReadonlyArray<string>, unique: boolean): string => {
   const kind = unique ? 'uidx' : 'idx'
   const name = `${table}_${columns.join('_')}_${kind}`
@@ -177,9 +161,6 @@ const validIndexName = (name: string): Effect.Effect<string, EffectSqlAdapterErr
       () => schemaError(`Index name "${name}" must be at most ${MAX_INDEX_NAME_BYTES} bytes.`),
     ),
   )
-
-// ---------------------------------------------------------------------------
-// Logical schema → physical tables
 
 const columnName = (fieldName: string, field: DBFieldAttribute): string => field.fieldName || fieldName
 
@@ -247,7 +228,7 @@ const resolveReference =
       }
     })
 
-/** Several schema keys may share a table name; their fields merge, later ones winning (as in better-auth). */
+/** Schema keys sharing a table merge their fields, later ones winning, as in better-auth. */
 const buildTable = (
   schema: BetterAuthDBSchema,
   rename: (name: string) => string,
@@ -276,7 +257,7 @@ const buildTable = (
     }),
   )
 
-/** Applies `rename` to every table and column name, so everything downstream sees physical names. */
+/** Up front, so index names come from physical names. */
 const renameSchema = (schema: BetterAuthDBSchema, rename: (name: string) => string): BetterAuthDBSchema =>
   Record.map(schema, (definition) => ({
     ...definition,
@@ -305,7 +286,6 @@ const dependencies = (table: Table): ReadonlyArray<string> =>
     Arr.filter((name) => name !== table.name),
   )
 
-/** Referenced tables first; otherwise better-auth's declared `order`. */
 const sortByDependencies = (tables: ReadonlyArray<Table>): ReadonlyArray<Table> => {
   const names = new Set(Arr.map(tables, (table) => table.name))
   const isReady = (created: ReadonlySet<string>) => (table: Table) =>
@@ -313,7 +293,7 @@ const sortByDependencies = (tables: ReadonlyArray<Table>): ReadonlyArray<Table> 
   const go = (pending: ReadonlyArray<Table>, created: ReadonlySet<string>): ReadonlyArray<Table> =>
     pipe(
       Arr.findFirst(pending, isReady(created)),
-      // A reference cycle cannot be ordered; fall back to the declared order.
+      // A reference cycle can't be ordered: keep the declared order.
       Option.orElse(() => Arr.head(pending)),
       Option.match({
         onNone: () => [],
@@ -329,17 +309,11 @@ const sortByDependencies = (tables: ReadonlyArray<Table>): ReadonlyArray<Table> 
   return go(Arr.sort(tables, byDeclaredOrder), new Set())
 }
 
-// ---------------------------------------------------------------------------
-// Column types
-
 const MYSQL_INDEX_KEY_BYTES = 3072
 const MYSQL_BYTES_PER_CHAR = 4
 const MYSQL_INDEXED_STRING_LENGTH = 191
 
-/**
- * MySQL can't index TEXT without a prefix length, so strings in table indexes
- * become VARCHAR sized to fit InnoDB's index key limit (utf8mb4).
- */
+/** MySQL can't index TEXT without a prefix: indexed strings become VARCHAR within InnoDB's key limit. */
 const mysqlIndexedStringLength = (table: Table, column: string): Option.Option<number> => {
   const isStringColumn = (name: string) =>
     Arr.some(table.columns, (candidate) => candidate.name === name && isStringLike(candidate.field))
@@ -396,9 +370,6 @@ const columnType = (
         ),
       )
 
-// ---------------------------------------------------------------------------
-// Rendering
-
 const columnDefinition = (
   config: SchemaConfig,
   table: Table,
@@ -448,7 +419,7 @@ const createTable = (config: SchemaConfig, table: Table): Effect.Effect<string, 
   )
 }
 
-/** Plain indexes declared on a field (`index: true`); unique fields get an inline UNIQUE instead. */
+/** Unique fields get an inline UNIQUE instead. */
 const fieldIndexes = (table: Table): ReadonlyArray<Index> =>
   pipe(
     Arr.filter(table.columns, ({ field }) => field.index === true && field.unique !== true),
@@ -460,10 +431,6 @@ const createIndex = (dialect: Dialect, table: string, index: Index): string => {
   return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX ${q(index.name)} ON ${q(table)} (${Arr.map(index.columns, q).join(', ')})`
 }
 
-/**
- * The DDL statements that create every table of a better-auth schema (as returned
- * by `getAuthTables(options)`), referenced tables first, followed by their indexes.
- */
 export const schemaStatements = (
   schema: BetterAuthDBSchema,
   config: SchemaConfig,
@@ -478,7 +445,6 @@ export const schemaStatements = (
     return [...createTables, ...createIndexes]
   })
 
-/** Joins statements into a single SQL script. */
 export const renderSchema = (statements: ReadonlyArray<string>): string =>
   Arr.match(statements, {
     onEmpty: () => '',

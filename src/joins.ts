@@ -5,17 +5,16 @@ import type { Row } from './operations'
 
 type Join = JoinConfig[string]
 
-/** better-auth's default when a join carries no limit. */
+/** better-auth's default join limit. */
 const DEFAULT_JOIN_LIMIT = 100
 
 interface Joined {
   readonly table: string
   readonly join: Join
-  /** Joined rows grouped by their `on.to` value. */
   readonly byKey: Record<string, Arr.NonEmptyArray<Row>>
 }
 
-/** Normalizes key values so that e.g. `1` and `1n` match. */
+/** Keys may differ in JS type, e.g. `1` and `1n`. */
 const keyOf = (value: unknown): string => String(value)
 
 const fetchJoined = (
@@ -35,7 +34,6 @@ const fetchJoined = (
     Effect.map((rows) => ({ table, join, byKey: Arr.groupBy(rows, (row) => keyOf(row[join.on.to])) })),
   )
 
-/** One-to-one joins hold a row or null; one-to-many joins an array capped at the join's limit. */
 const related = ({ join, byKey }: Joined, parent: Row): Row | ReadonlyArray<Row> | null => {
   const matches = Option.fromUndefinedOr(byKey[keyOf(parent[join.on.from])])
   return join.relation === 'one-to-one'
@@ -47,11 +45,7 @@ const related = ({ join, byKey }: Joined, parent: Row): Row | ReadonlyArray<Row>
       )
 }
 
-/**
- * Resolves better-auth joins with one `IN` query per joined table (instead of a query per
- * parent row) and attaches the results under the joined table's name, as the factory expects.
- * Queries run one after another, so a join never takes extra connections from the pool.
- */
+/** One `IN` query per joined table, not per row. Sequential, so a join takes no extra pool connections. */
 export const attachJoins = (
   sql: SqlClient.SqlClient,
   join: JoinConfig,
