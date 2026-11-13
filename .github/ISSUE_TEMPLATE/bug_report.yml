@@ -1,0 +1,39 @@
+name: Bug report
+description: Something doesn't work as documented
+labels: [bug]
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: better-auth-effect, effect, better-auth and the @effect/sql-* driver
+      placeholder: better-auth-effect 1.0.0, effect 4.1.4, better-auth 1.7.22, @effect/sql-pg 4.1.4
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      options: [PostgreSQL, MySQL, SQLite, Other]
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Runtime
+      placeholder: Node.js 24.11 / Bun 1.4
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The error, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: The smallest code that shows it, including the layer setup and the Better Auth options.
+      render: ts
+    validations:
+      required: true

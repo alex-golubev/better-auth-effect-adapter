@@ -1,0 +1,28 @@
+name: Compatibility
+
+# The peer ranges (effect ^4.1, better-auth ^1.7) let users upgrade before we do, and
+# effect/sql is marked unstable. This runs the full suite on the latest releases weekly.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  latest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Upgrade Effect and Better Auth to their latest releases
+        run: >-
+          pnpm update --latest
+          effect @effect/sql-pg @effect/sql-mysql2 @effect/sql-sqlite-node @effect/sql-sqlite-bun @effect/vitest
+          better-auth @better-auth/core @better-auth/test-utils
+      - run: pnpm list effect better-auth
+      - run: pnpm typecheck
+      - run: pnpm test:all

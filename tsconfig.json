@@ -73,6 +73,7 @@
           "@effect/sql-pg",
           "@effect/sql-mysql2",
           "@effect/sql-sqlite-node",
+          "@effect/sql-sqlite-bun",
           "@effect/vitest"
         ],
         "barrelImportPackages": ["effect"]

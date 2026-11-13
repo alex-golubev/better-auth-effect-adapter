@@ -26,7 +26,8 @@
     "test:all": "vitest run",
     "test:watch": "vitest --project unit",
     "prepublishOnly": "pnpm build && pnpm typecheck && pnpm check && pnpm test:all",
-    "prepare": "effect-tsgo patch --typescript --no-oxlint"
+    "prepare": "effect-tsgo patch --typescript --no-oxlint",
+    "test:bun": "bun test/bun-smoke.ts"
   },
   "peerDependencies": {
     "better-auth": "^1.7.0",
@@ -59,6 +60,7 @@
     "@biomejs/biome": "2.6.7",
     "@effect/sql-mysql2": "4.1.4",
     "@effect/sql-pg": "4.1.4",
+    "@effect/sql-sqlite-bun": "4.1.4",
     "@effect/sql-sqlite-node": "4.1.4",
     "@effect/tsgo": "0.68.1",
     "@effect/vitest": "4.1.4",

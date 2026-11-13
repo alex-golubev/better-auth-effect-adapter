@@ -15,6 +15,7 @@ pnpm check              # Biome lint + format check (pnpm check:fix to apply)
 pnpm test               # vitest project "unit"        (src/**/*.test.ts)
 pnpm test:integration   # vitest project "integration" (test/**/*.test.ts; PG/MySQL need Docker)
 pnpm test:all           # both
+pnpm test:bun           # smoke test under Bun (test/bun-smoke.ts, needs bun)
 ```
 
 To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run test/sqlite.test.ts`.
@@ -25,6 +26,7 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 - `test/` holds integration tests. They run against SQLite (in-memory), plus PostgreSQL and MySQL via testcontainers (`test/harness.ts`).
   - `sqlite.test.ts`, `postgres.test.ts`, `mysql.test.ts` run every official `@better-auth/test-utils` suite through `runOfficialSuites` (`test/suites.ts`).
   - `sqlite-snake-case.test.ts` runs them again with the client's name transforms (`camelToSnake` / `snakeToCamel`).
+  - `bun-smoke.ts` (not a Vitest file) checks the transaction bridge and `AuthCallError` under Bun with `@effect/sql-sqlite-bun`. It imports from `src/`, not the harness, whose Node drivers Bun may not load.
   - `schema.test.ts` checks the generated DDL, `issue-4.test.ts` the app-transaction bridge on all three databases, `operations.test.ts` the guards of `incrementOne`/`consumeOne` under concurrent writes and bigint results, and `pool.test.ts` that auth shares the app's PostgreSQL pool.
 - Tests are written with `@effect/vitest`.
   - Test bodies are effects: `it.effect(name, () => Effect.gen(...))`.
@@ -34,6 +36,19 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - Each test starts with `yield* resetSchema(options)`. `@effect/vitest`'s `beforeEach` can't require services.
   - Better-auth calls go through `run` / `bind` (inside transactions) or `Effect.promise` (outside them).
   - The official suites are the exception: `@better-auth/test-utils` drives Vitest through a Promise API, so `runOfficialSuites` runs the database layer on a `ManagedRuntime`.
+
+## CI and releases
+
+- `.github/workflows/ci.yml` runs on pushes and PRs to `main`:
+  - typecheck, Biome, unit tests and build on Node 22/24/26;
+  - integration tests with Docker;
+  - the Bun smoke test on the latest Bun.
+- `compat.yml` runs the full suite weekly on the latest `effect` and `better-auth` releases, since the peer ranges let users upgrade before we do. Dependabot (`.github/dependabot.yml`) groups effect, better-auth and tooling updates.
+- `release.yml` publishes on a pushed `vX.Y.Z` tag.
+  - npm trusted publishing (OIDC): no token is stored, and the package gets provenance.
+  - It creates the GitHub release from the version's `CHANGELOG.md` section.
+  - To release: set the version, date the changelog, commit as `X.Y.Z`, then push the tag. Details are in `CONTRIBUTING.md`.
+- Commits must use the GitHub noreply email; this repo's local git config sets it. GitHub rejects pushes that expose the private one.
 
 ## Code style
 

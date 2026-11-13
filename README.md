@@ -1,5 +1,9 @@
 # better-auth-effect
 
+[![npm](https://img.shields.io/npm/v/better-auth-effect)](https://www.npmjs.com/package/better-auth-effect)
+[![CI](https://github.com/alex-golubev/better-auth-effect-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-golubev/better-auth-effect-adapter/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/npm/l/better-auth-effect)](./LICENSE)
+
 A [Better Auth](https://better-auth.com) database adapter for [Effect SQL](https://effect.website) (`effect/sql`), for PostgreSQL, MySQL and SQLite.
 
 - **One connection pool.** Better Auth runs on your app's `SqlClient`, so it uses your pool and your layers.
@@ -279,6 +283,10 @@ EffectSqlAdapter.make({ debugLogs: true })
 ```
 
 `debugLogs` is passed to Better Auth's adapter factory.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Report security issues privately, as described in [SECURITY.md](./SECURITY.md).
 
 ## License
 

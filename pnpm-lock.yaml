@@ -23,6 +23,9 @@ importers:
       '@effect/sql-pg':
         specifier: 4.1.4
         version: 4.1.4(effect@4.1.4)
+      '@effect/sql-sqlite-bun':
+        specifier: 4.1.4
+        version: 4.1.4(effect@4.1.4)
       '@effect/sql-sqlite-node':
         specifier: 4.1.4
         version: 4.1.4(effect@4.1.4)
@@ -221,6 +224,11 @@ packages:
 
   '@effect/sql-pg@4.1.4':
     resolution: {integrity: sha512-DHsmpIfJeCYiJVk3JwMQFAWaQAmKV/elUbBCjHFP7qeZtJ8dViUV/y/AHdUaZ+OmMwtr8J7ZXA7AlsKZ9hPiQA==}
+    peerDependencies:
+      effect: ^4.1.4
+
+  '@effect/sql-sqlite-bun@4.1.4':
+    resolution: {integrity: sha512-z7wu/98/Hh0ArV7VaYPZ4uPX/2TpLX0vdO36zn1Z7l616xVJAv7Vd9vkDothKS+9LgJN1x8wmEZsswAacKyGxA==}
     peerDependencies:
       effect: ^4.1.4
 
@@ -1883,6 +1891,10 @@ snapshots:
       - '@types/node'
 
   '@effect/sql-pg@4.1.4(effect@4.1.4)':
+    dependencies:
+      effect: 4.1.4
+
+  '@effect/sql-sqlite-bun@4.1.4(effect@4.1.4)':
     dependencies:
       effect: 4.1.4
 

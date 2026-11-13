@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      effect:
+        patterns: ["effect", "@effect/*"]
+      better-auth:
+        patterns: ["better-auth", "@better-auth/*"]
+      tooling:
+        patterns: ["*"]
+        exclude-patterns: ["effect", "@effect/*", "better-auth", "@better-auth/*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
