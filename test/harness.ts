@@ -6,7 +6,7 @@ import { MySqlContainer } from '@testcontainers/mysql'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import type { BetterAuthOptions } from 'better-auth'
 import { getAuthTables } from 'better-auth/db'
-import { Effect, Layer, Redacted, String as Str } from 'effect'
+import { Effect, Layer, Redacted, String } from 'effect'
 import { SqlClient } from 'effect/sql'
 import { type Dialect, dialectOf } from '../src/dialect'
 import { clientNames, idStrategyOf, schemaStatements } from '../src/schema'
@@ -70,7 +70,7 @@ export interface SqliteOptions {
 }
 
 const snakeCaseNames = (snakeCase: boolean) =>
-  snakeCase ? { transformQueryNames: Str.camelToSnake, transformResultNames: Str.snakeToCamel } : {}
+  snakeCase ? { transformQueryNames: String.camelToSnake, transformResultNames: String.snakeToCamel } : {}
 
 export const sqliteDatabase = ({ snakeCase = false }: SqliteOptions = {}): Database =>
   SqliteClient.layer({ filename: ':memory:', ...snakeCaseNames(snakeCase) })

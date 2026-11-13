@@ -55,6 +55,11 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - no global `console`, `fetch`, `Math.random`, timers or `process.env`;
   - `Effect.try`/`tryPromise` always with a `catch` that maps to a typed error, no `try`/`catch` in generators;
   - `Effect.provide(layer)` only at entry points. In tests, share layers through `layer(...)` blocks, and build a local one with `Layer.build` + `Effect.provideContext`.
+- Import Effect modules by their own names from the barrel: `import { Array, Option, Record, String } from 'effect'`, with no aliases such as `Arr` or `Str`.
+  - `preferBarrelImport` (with `barrelImportPackages: ["effect"]`) rejects `effect/Array`-style module imports.
+  - Shadowing the globals `Array` and `String` is intended, since the rules above forbid the natives anyway, so Biome's `noShadowRestrictedNames` is off.
+  - Type positions still resolve to the global types (`Record<K, V>`, `Array<T>`).
+  - Where `String` is imported, convert values with a template literal instead of `String(x)`.
 - Biome (`biome.json`): 2-space indent, 120 columns, single quotes, no semicolons, trailing commas.
 - Use `import type` for type-only imports.
 - Unused variables are errors.

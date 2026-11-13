@@ -1,7 +1,7 @@
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { describe, expect, it, layer } from '@effect/vitest'
 import type { BetterAuthOptions } from 'better-auth'
-import { Array as Arr, Context, Data, DateTime, Effect, pipe, Ref, String as Str } from 'effect'
+import { Array, Context, Data, DateTime, Effect, pipe, Ref, String } from 'effect'
 import { SqlClient, SqlError, Statement } from 'effect/sql'
 import { fromContext, make, run } from './adapter'
 import { AuthCallError, EffectSqlAdapterError } from './errors'
@@ -21,8 +21,8 @@ class Rejected extends Data.TaggedError('Rejected')<{ readonly cause: unknown }>
 const statementsOf = (code: string) =>
   pipe(
     code,
-    Str.split(';'),
-    Arr.filter((statement) => Str.isNonEmpty(Str.trim(statement))),
+    String.split(';'),
+    Array.filter((statement) => String.isNonEmpty(String.trim(statement))),
   )
 
 const inAMinute = Effect.map(DateTime.now, (now) => DateTime.toDateUtc(DateTime.add(now, { minutes: 1 })))
@@ -116,7 +116,7 @@ layer(Sqlite, { buildPerTest: true })('adapter on SQLite', (it) => {
   )
 })
 
-layer(SqliteClient.layer({ filename: ':memory:', transformQueryNames: Str.camelToSnake }))(
+layer(SqliteClient.layer({ filename: ':memory:', transformQueryNames: String.camelToSnake }))(
   'adapter with name transforms',
   (it) => {
     it.effect("generates the names the client's transformQueryNames gives the adapter's queries", () =>
@@ -212,7 +212,7 @@ layer(Sqlite, { buildPerTest: true })('native operations on SQLite', (it) => {
         ),
       )
       yield* Effect.forEach(
-        Arr.flatMap(users, (user) => Arr.map([1, 2], (n) => ({ user, n }))),
+        Array.flatMap(users, (user) => Array.map([1, 2], (n) => ({ user, n }))),
         ({ user, n }) =>
           Effect.promise(() =>
             adapter.create({
@@ -231,12 +231,12 @@ layer(Sqlite, { buildPerTest: true })('native operations on SQLite', (it) => {
         adapter.findMany<{ session: ReadonlyArray<unknown> }>({ model: 'user', join: { session: true } }),
       )
       expect(found.statements).toHaveLength(2)
-      expect(Arr.map(found.result, (user) => user.session.length)).toEqual([2, 2, 2])
+      expect(Array.map(found.result, (user) => user.session.length)).toEqual([2, 2, 2])
       const limited = yield* traced(() =>
         adapter.findMany<{ session: ReadonlyArray<unknown> }>({ model: 'user', join: { session: { limit: 1 } } }),
       )
       expect(limited.statements[1]).toMatch(/ROW_NUMBER\(\) OVER/)
-      expect(Arr.map(limited.result, (user) => user.session.length)).toEqual([1, 1, 1])
+      expect(Array.map(limited.result, (user) => user.session.length)).toEqual([1, 1, 1])
     }),
   )
 })

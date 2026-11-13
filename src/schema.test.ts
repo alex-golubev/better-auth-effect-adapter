@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@effect/vitest'
 import type { BetterAuthOptions } from 'better-auth'
 import { getAuthTables } from 'better-auth/db'
-import { Array as Arr, Effect, Option, pipe, String as Str } from 'effect'
+import { Array, Effect, Option, pipe, String } from 'effect'
 import type { Dialect } from './dialect'
 import { EffectSqlAdapterError } from './errors'
 import { type IdStrategy, idStrategyOf, renderSchema, type SchemaConfig, schemaStatements } from './schema'
@@ -14,7 +14,7 @@ const ddl = (options: BetterAuthOptions, config: SchemaConfig) => schemaStatemen
 /** The first capture group of `pattern` in `statement`, if it matches. */
 const captured = (pattern: RegExp) => (statement: string) =>
   pipe(
-    Str.match(pattern)(statement),
+    String.match(pattern)(statement),
     Option.flatMap((match) => Option.fromUndefinedOr(match[1])),
     Option.toArray,
   )
@@ -44,7 +44,7 @@ describe('schemaStatements', () => {
         },
         { dialect: 'pg', idStrategy: 'string' },
       )
-      const created = Arr.flatMap(statements, captured(/^CREATE TABLE "(\w+)"/))
+      const created = Array.flatMap(statements, captured(/^CREATE TABLE "(\w+)"/))
       expect(created.indexOf('user')).toBeLessThan(created.indexOf('session'))
       expect(created.indexOf('parent')).toBeLessThan(created.indexOf('child'))
     }),
@@ -96,7 +96,7 @@ describe('schemaStatements', () => {
           {
             dialect: 'pg',
             idStrategy: 'string',
-            rename: Str.camelToSnake,
+            rename: String.camelToSnake,
           },
         ),
       )
@@ -113,10 +113,15 @@ describe('schemaStatements', () => {
       const fk = (dialect: Dialect, idStrategy: IdStrategy) =>
         Effect.map(ddl({}, { dialect, idStrategy }), (statements) =>
           pipe(
-            Arr.findFirst(statements, (s) => Str.includes('TABLE "session"')(s) || Str.includes('TABLE `session`')(s)),
-            Option.map(Str.split('\n')),
-            Option.flatMap(Arr.findFirst((line) => Str.includes('userId')(line) && !Str.includes('FOREIGN KEY')(line))),
-            Option.map(Str.trim),
+            Array.findFirst(
+              statements,
+              (s) => String.includes('TABLE "session"')(s) || String.includes('TABLE `session`')(s),
+            ),
+            Option.map(String.split('\n')),
+            Option.flatMap(
+              Array.findFirst((line) => String.includes('userId')(line) && !String.includes('FOREIGN KEY')(line)),
+            ),
+            Option.map(String.trim),
             Option.getOrUndefined,
           ),
         )
@@ -199,20 +204,20 @@ describe('schemaStatements', () => {
       const statements = yield* ddl({}, { dialect: 'sqlite', idStrategy: 'string' })
       expect(statements).toContain('CREATE INDEX "session_userId_idx" ON "session" ("userId")')
       expect(statements).toContain('CREATE INDEX "verification_identifier_idx" ON "verification" ("identifier")')
-      expect(Arr.some(statements, Str.includes('session_token'))).toBe(false)
+      expect(Array.some(statements, String.includes('session_token'))).toBe(false)
     }),
   )
 
   it.effect('shortens long index names with a stable hash', () =>
     Effect.gen(function* () {
-      const longField = Str.repeat(80)('a')
+      const longField = String.repeat(80)('a')
       const statements = yield* ddl(
         { plugins: [{ id: 'long', schema: { item: { fields: { [longField]: { type: 'string', index: true } } } } }] },
         { dialect: 'pg', idStrategy: 'string' },
       )
       const name = pipe(
-        Arr.flatMap(statements, captured(/^CREATE INDEX "(\w+)"/)),
-        Arr.findFirst(Str.startsWith('item_')),
+        Array.flatMap(statements, captured(/^CREATE INDEX "(\w+)"/)),
+        Array.findFirst(String.startsWith('item_')),
         Option.getOrUndefined,
       )
       expect(name).toMatch(/^item_a+_[0-9a-f]{8}_idx$/)
@@ -245,7 +250,7 @@ describe('schemaStatements', () => {
       }
       const item = (dialect: Dialect) =>
         Effect.map(ddl(options, { dialect, idStrategy: 'string' }), (statements) =>
-          Option.getOrUndefined(Arr.findFirst(statements, (s) => /TABLE ["`]item["`]/.test(s))),
+          Option.getOrUndefined(Array.findFirst(statements, (s) => /TABLE ["`]item["`]/.test(s))),
         )
       expect(yield* item('sqlite')).toMatchInlineSnapshot(`
       "CREATE TABLE "item" (
@@ -299,7 +304,7 @@ describe('schemaStatements', () => {
         },
         { dialect: 'sqlite', idStrategy: 'string' },
       )
-      expect(Arr.some(statements, Str.includes('"external"'))).toBe(false)
+      expect(Array.some(statements, String.includes('"external"'))).toBe(false)
     }),
   )
 
@@ -313,7 +318,7 @@ describe('schemaStatements', () => {
         },
         { dialect: 'pg', idStrategy: 'string' },
       )
-      expect(Arr.some(statements, Str.startsWith('CREATE TABLE "we""ird`name"'))).toBe(true)
+      expect(Array.some(statements, String.startsWith('CREATE TABLE "we""ird`name"'))).toBe(true)
       const mysql = yield* ddl(
         {
           plugins: [
@@ -322,7 +327,7 @@ describe('schemaStatements', () => {
         },
         { dialect: 'mysql', idStrategy: 'string' },
       )
-      expect(Arr.some(mysql, Str.startsWith('CREATE TABLE `we"ird``name`'))).toBe(true)
+      expect(Array.some(mysql, String.startsWith('CREATE TABLE `we"ird``name`'))).toBe(true)
     }),
   )
 

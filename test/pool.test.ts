@@ -3,7 +3,7 @@
  * neither deadlock nor open a second connection.
  */
 import { expect } from '@effect/vitest'
-import { Array as Arr, Effect, Layer } from 'effect'
+import { Array, Effect, Layer } from 'effect'
 import { SqlClient } from 'effect/sql'
 import { bind } from '../src/adapter'
 import { Auth, authOptions, signUpBody } from './auth'
@@ -31,8 +31,8 @@ withDatabase(Layer.provideMerge(Auth.layer, postgresDatabase({ maxConnections: 1
         const signUp = (n: number) => auth.use((api) => api.signUpEmail({ body: signUpBody(`pool-${n}@example.com`) }))
         yield* Effect.all(
           [
-            Effect.forEach(Arr.range(1, 10), () => appQuery, { concurrency: 'unbounded' }),
-            Effect.forEach(Arr.range(1, 10), signUp, { concurrency: 'unbounded' }),
+            Effect.forEach(Array.range(1, 10), () => appQuery, { concurrency: 'unbounded' }),
+            Effect.forEach(Array.range(1, 10), signUp, { concurrency: 'unbounded' }),
           ],
           { concurrency: 'unbounded' },
         ).pipe(Effect.timeout('20 seconds'))

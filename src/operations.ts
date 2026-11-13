@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Option, Predicate, pipe, Record } from 'effect'
+import { Array, Effect, Option, Predicate, pipe, Record } from 'effect'
 import type { SqlClient, SqlError, Statement } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { adapterError, type EffectSqlAdapterError } from './errors'
@@ -33,9 +33,9 @@ const whereSql = (sql: SqlClient.SqlClient, where: Option.Option<Fragment>): Fra
   Option.match(where, { onNone: () => empty(sql), onSome: (condition) => sql`WHERE ${condition}` })
 
 const columnsSql = (sql: SqlClient.SqlClient, columns: ReadonlyArray<string>): Fragment =>
-  Arr.match(columns, {
+  Array.match(columns, {
     onEmpty: () => sql.literal('*'),
-    onNonEmpty: (names) => sql.join(', ', false)(Arr.map(names, (name) => sql`${sql(name)}`)),
+    onNonEmpty: (names) => sql.join(', ', false)(Array.map(names, (name) => sql`${sql(name)}`)),
   })
 
 const orderBySql = (sql: SqlClient.SqlClient, sort: Option.Option<Sort>): Fragment =>
@@ -79,7 +79,7 @@ const affectedRowsKeys = ['changes', 'rowCount', 'affectedRows', 'rowsAffected']
 
 export const affectedRows = (raw: unknown): Effect.Effect<number, EffectSqlAdapterError> =>
   pipe(
-    Arr.findFirst(affectedRowsKeys, (key) =>
+    Array.findFirst(affectedRowsKeys, (key) =>
       pipe(
         Option.liftPredicate(raw, Predicate.hasProperty(key)),
         Option.map((result) => result[key]),
@@ -91,10 +91,10 @@ export const affectedRows = (raw: unknown): Effect.Effect<number, EffectSqlAdapt
     Effect.mapError(() => adapterError('The driver did not report affected rows')),
   )
 
-export const firstOrNull = (rows: ReadonlyArray<Row>): Row | null => Option.getOrNull(Arr.head(rows))
+export const firstOrNull = (rows: ReadonlyArray<Row>): Row | null => Option.getOrNull(Array.head(rows))
 
 const firstRow = (rows: ReadonlyArray<Row>, message: string): Effect.Effect<Row, EffectSqlAdapterError> =>
-  Effect.mapError(Effect.fromOption(Arr.head(rows)), () => adapterError(message))
+  Effect.mapError(Effect.fromOption(Array.head(rows)), () => adapterError(message))
 
 interface Returning {
   readonly insert: (sql: SqlClient.SqlClient, table: string, data: Row) => Operation<Row>
@@ -181,15 +181,15 @@ const mysqlReturning: Returning = {
   update: (sql, table, where, data) =>
     sql.withTransaction(
       Effect.flatMap(lockMatching(sql, table, where, { columns: sql`${sql('id')}`, limit: empty(sql) }), (locked) =>
-        Arr.match(locked, {
+        Array.match(locked, {
           onEmpty: () => Effect.succeed(null),
           onNonEmpty: (matched) =>
             Effect.andThen(
               sql`UPDATE ${sql(table)} SET ${sql.update(data)} WHERE ${sql.in(
                 'id',
-                Arr.map(matched, (row) => row.id),
+                Array.map(matched, (row) => row.id),
               )}`,
-              Effect.map(selectById(sql, table, data.id ?? Arr.headNonEmpty(matched).id), firstOrNull),
+              Effect.map(selectById(sql, table, data.id ?? Array.headNonEmpty(matched).id), firstOrNull),
             ),
         }),
       ),
@@ -199,7 +199,7 @@ const mysqlReturning: Returning = {
       Effect.flatMap(
         lockMatching(sql, table, where, { columns: sql.literal('*'), limit: sql.literal('LIMIT 1') }),
         (locked) =>
-          Option.match(Arr.head(locked), {
+          Option.match(Array.head(locked), {
             onNone: () => Effect.succeed(null),
             onSome: (row) => Effect.as(sql`DELETE FROM ${sql(table)} WHERE ${sql('id')} = ${row.id}`, row),
           }),
@@ -210,7 +210,7 @@ const mysqlReturning: Returning = {
       Effect.flatMap(
         lockMatching(sql, table, where, { columns: sql`${sql('id')}`, limit: sql.literal('LIMIT 1') }),
         (locked) =>
-          Option.match(Arr.head(locked), {
+          Option.match(Array.head(locked), {
             onNone: () => Effect.succeed(null),
             onSome: ({ id }) =>
               Effect.andThen(
@@ -285,7 +285,7 @@ export const count = (sql: SqlClient.SqlClient, table: string, where: Option.Opt
     sql<{ total: unknown }>`SELECT COUNT(*) AS ${sql('total')} FROM ${sql(table)} ${whereSql(sql, where)}`,
     (rows) =>
       pipe(
-        Arr.head(rows),
+        Array.head(rows),
         Option.map((row) => Number(row.total)),
         Option.getOrElse(() => 0),
       ),
@@ -303,8 +303,8 @@ const assignments = (sql: SqlClient.SqlClient, increment: Record<string, number>
     ', ',
     false,
   )([
-    ...Arr.map(Record.toEntries(increment), ([column, by]) => sql`${sql(column)} = ${sql(column)} + ${by}`),
-    ...Arr.map(Record.toEntries(set), ([column, value]) => sql`${sql(column)} = ${value}`),
+    ...Array.map(Record.toEntries(increment), ([column, by]) => sql`${sql(column)} = ${sql(column)} + ${by}`),
+    ...Array.map(Record.toEntries(set), ([column, value]) => sql`${sql(column)} = ${value}`),
   ])
 
 export const incrementOne = (

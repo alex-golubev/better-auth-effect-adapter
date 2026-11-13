@@ -1,5 +1,5 @@
 import type { JoinConfig } from 'better-auth/adapters'
-import { Array as Arr, Effect, Option, Predicate, pipe, Record } from 'effect'
+import { Array, Effect, Option, Predicate, pipe, Record } from 'effect'
 import type { SqlClient, SqlError } from 'effect/sql'
 import type { Row } from './operations'
 
@@ -8,7 +8,7 @@ type Join = JoinConfig[string]
 interface Joined {
   readonly table: string
   readonly join: Join
-  readonly byKey: Record<string, Arr.NonEmptyArray<Row>>
+  readonly byKey: Record<string, Array.NonEmptyArray<Row>>
 }
 
 /** Keys may differ in JS type, e.g. `1` and `1n`. */
@@ -22,7 +22,7 @@ const joinedRows = (
   sql: SqlClient.SqlClient,
   table: string,
   join: Join,
-  keys: Arr.NonEmptyReadonlyArray<unknown>,
+  keys: Array.NonEmptyReadonlyArray<unknown>,
 ): Effect.Effect<ReadonlyArray<Row>, SqlError.SqlError> =>
   Option.match(Option.fromUndefinedOr(join.limit), {
     onNone: () => sql<Row>`SELECT * FROM ${sql(table)} WHERE ${sql.in(join.on.to, keys)}`,
@@ -32,7 +32,7 @@ const joinedRows = (
           SELECT ${sql(table)}.*, ROW_NUMBER() OVER (PARTITION BY ${sql(join.on.to)}) AS ${sql(RANK)}
           FROM ${sql(table)} WHERE ${sql.in(join.on.to, keys)}
         ) ${sql('ranked')} WHERE ${sql(RANK)} <= ${limit}`,
-        Arr.map((row) => Record.remove(row, RANK)),
+        Array.map((row) => Record.remove(row, RANK)),
       ),
   })
 
@@ -43,20 +43,20 @@ const fetchJoined = (
   parents: ReadonlyArray<Row>,
 ): Effect.Effect<Joined, SqlError.SqlError> =>
   pipe(
-    Arr.map(parents, (parent) => parent[join.on.from]),
-    Arr.filter(Predicate.isNotNullish),
-    Arr.dedupeWith((a, b) => keyOf(a) === keyOf(b)),
-    Arr.match({
+    Array.map(parents, (parent) => parent[join.on.from]),
+    Array.filter(Predicate.isNotNullish),
+    Array.dedupeWith((a, b) => keyOf(a) === keyOf(b)),
+    Array.match({
       onEmpty: () => Effect.succeed<ReadonlyArray<Row>>([]),
       onNonEmpty: (keys) => joinedRows(sql, table, join, keys),
     }),
-    Effect.map((rows) => ({ table, join, byKey: Arr.groupBy(rows, (row) => keyOf(row[join.on.to])) })),
+    Effect.map((rows) => ({ table, join, byKey: Array.groupBy(rows, (row) => keyOf(row[join.on.to])) })),
   )
 
 const related = ({ join, byKey }: Joined, parent: Row): Row | ReadonlyArray<Row> | null => {
   const matches = Option.fromUndefinedOr(byKey[keyOf(parent[join.on.from])])
   return join.relation === 'one-to-one'
-    ? pipe(matches, Option.map(Arr.headNonEmpty), Option.getOrNull)
+    ? pipe(matches, Option.map(Array.headNonEmpty), Option.getOrNull)
     : Option.getOrElse(matches, (): ReadonlyArray<Row> => [])
 }
 
@@ -69,7 +69,7 @@ export const attachJoins = (
   Effect.map(
     Effect.forEach(Record.toEntries(join), ([table, entry]) => fetchJoined(sql, table, entry, parents)),
     (joined) =>
-      Arr.map(parents, (parent) =>
-        Arr.reduce(joined, parent, (row, entry) => ({ ...row, [entry.table]: related(entry, parent) })),
+      Array.map(parents, (parent) =>
+        Array.reduce(joined, parent, (row, entry) => ({ ...row, [entry.table]: related(entry, parent) })),
       ),
   )

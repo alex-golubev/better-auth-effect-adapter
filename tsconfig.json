@@ -52,6 +52,7 @@
           "multipleEffectProvide": "error",
           "newPromise": "error",
           "nodeBuiltinImport": "error",
+          "preferBarrelImport": "error",
           "preferEffectArray": "error",
           "preferEffectRecord": "error",
           "preferEffectString": "error",
@@ -73,7 +74,8 @@
           "@effect/sql-mysql2",
           "@effect/sql-sqlite-node",
           "@effect/vitest"
-        ]
+        ],
+        "barrelImportPackages": ["effect"]
       }
     ]
   },

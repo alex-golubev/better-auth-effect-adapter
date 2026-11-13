@@ -1,5 +1,5 @@
 import type { CleanedWhere, WhereOperator } from 'better-auth/adapters'
-import { Array as Arr, Match, Option, Predicate, pipe, String as Str } from 'effect'
+import { Array, Match, Option, Predicate, pipe, String } from 'effect'
 import type { SqlClient, Statement } from 'effect/sql'
 import { type Dialect, type DialectProfile, dialectProfiles } from './dialect'
 
@@ -26,29 +26,29 @@ export const toSqlValue =
 const scalar = (condition: Condition): unknown => toSqlValue(dialectProfiles[condition.dialect])(condition.value)
 
 const list = (condition: Condition): ReadonlyArray<unknown> =>
-  Arr.map(
-    Arr.isArray(condition.value) ? condition.value : [condition.value],
+  Array.map(
+    Array.isArray(condition.value) ? condition.value : [condition.value],
     toSqlValue(dialectProfiles[condition.dialect]),
   )
 
 const lowered = ({ sql, column }: Condition): Fragment => sql`LOWER(${column})`
 
 /** Lowercased by the database, like `LOWER(column)`. */
-const loweredList = (sql: SqlClient.SqlClient, values: Arr.NonEmptyReadonlyArray<unknown>): Fragment =>
+const loweredList = (sql: SqlClient.SqlClient, values: Array.NonEmptyReadonlyArray<unknown>): Fragment =>
   // `sql.join` parenthesizes only 2+ items, and `IN LOWER(?)` parses as a table.
-  sql`(${sql.join(', ', false)(Arr.map(values, (value) => sql`LOWER(${value})`))})`
+  sql`(${sql.join(', ', false)(Array.map(values, (value) => sql`LOWER(${value})`))})`
 
 /** MySQL's default collations ignore case. The collation goes on the value: it is utf8mb4, the column may not be. */
 const binary = (sql: SqlClient.SqlClient, value: unknown): Fragment => sql`(${value} COLLATE utf8mb4_bin)`
 
-const binaryList = (sql: SqlClient.SqlClient, values: Arr.NonEmptyReadonlyArray<unknown>): Fragment =>
-  sql`(${sql.join(', ', false)(Arr.map(values, (value) => binary(sql, value)))})`
+const binaryList = (sql: SqlClient.SqlClient, values: Array.NonEmptyReadonlyArray<unknown>): Fragment =>
+  sql`(${sql.join(', ', false)(Array.map(values, (value) => binary(sql, value)))})`
 
 interface Exact {
   readonly eq: (condition: Condition) => Fragment
   readonly ne: (condition: Condition) => Fragment
-  readonly in: (condition: Condition, values: Arr.NonEmptyReadonlyArray<unknown>) => Fragment
-  readonly not_in: (condition: Condition, values: Arr.NonEmptyReadonlyArray<unknown>) => Fragment
+  readonly in: (condition: Condition, values: Array.NonEmptyReadonlyArray<unknown>) => Fragment
+  readonly not_in: (condition: Condition, values: Array.NonEmptyReadonlyArray<unknown>) => Fragment
 }
 
 /** SQLite and PostgreSQL compare strings exactly by default. */
@@ -59,7 +59,7 @@ const plainExact: Exact = {
   not_in: (condition, values) => condition.sql`${condition.column} NOT IN ${condition.sql.in(values)}`,
 }
 
-const allStrings = (values: ReadonlyArray<unknown>): boolean => Arr.every(values, Predicate.isString)
+const allStrings = (values: ReadonlyArray<unknown>): boolean => Array.every(values, Predicate.isString)
 
 /** The plain `=`/`IN` keeps an exact index lookup; the binary comparison decides. */
 const mysqlExact: Exact = {
@@ -88,33 +88,35 @@ interface Wildcards {
   readonly after: boolean
 }
 
+const textOf = (value: unknown): string => `${value}`
+
 const LIKE_ESCAPE = '!'
 
 const likePattern = (value: string, { before, after }: Wildcards): string =>
-  `${before ? '%' : ''}${Str.replace(/[!%_]/g, `${LIKE_ESCAPE}$&`)(value)}${after ? '%' : ''}`
+  `${before ? '%' : ''}${String.replace(/[!%_]/g, `${LIKE_ESCAPE}$&`)(value)}${after ? '%' : ''}`
 
 /** GLOB has no ESCAPE clause: `[*]` matches `*` literally. */
 const globPattern = (value: string, { before, after }: Wildcards): string =>
-  `${before ? '*' : ''}${Str.replace(/[[*?]/g, '[$&]')(value)}${after ? '*' : ''}`
+  `${before ? '*' : ''}${String.replace(/[[*?]/g, '[$&]')(value)}${after ? '*' : ''}`
 
 const escapeClause = (sql: SqlClient.SqlClient): Fragment => sql.literal(`ESCAPE '${LIKE_ESCAPE}'`)
 
 const sensitiveMatch: Record<Dialect, (condition: Condition, wildcards: Wildcards) => Fragment> = {
   // SQLite's LIKE ignores ASCII case; GLOB is case-sensitive.
-  sqlite: ({ sql, column, value }, wildcards) => sql`${column} GLOB ${globPattern(String(value), wildcards)}`,
+  sqlite: ({ sql, column, value }, wildcards) => sql`${column} GLOB ${globPattern(textOf(value), wildcards)}`,
   pg: ({ sql, column, value }, wildcards) =>
-    sql`${column} LIKE ${likePattern(String(value), wildcards)} ${escapeClause(sql)}`,
+    sql`${column} LIKE ${likePattern(textOf(value), wildcards)} ${escapeClause(sql)}`,
   mysql: ({ sql, column, value }, wildcards) =>
-    sql`${column} LIKE ${binary(sql, likePattern(String(value), wildcards))} ${escapeClause(sql)}`,
+    sql`${column} LIKE ${binary(sql, likePattern(textOf(value), wildcards))} ${escapeClause(sql)}`,
 }
 
 const loweredLike = (condition: Condition, wildcards: Wildcards): Fragment =>
-  condition.sql`${lowered(condition)} LIKE LOWER(${likePattern(String(condition.value), wildcards)}) ${escapeClause(condition.sql)}`
+  condition.sql`${lowered(condition)} LIKE LOWER(${likePattern(textOf(condition.value), wildcards)}) ${escapeClause(condition.sql)}`
 
 const insensitiveMatch: Record<Dialect, (condition: Condition, wildcards: Wildcards) => Fragment> = {
   sqlite: loweredLike,
   pg: ({ sql, column, value }, wildcards) =>
-    sql`${column} ILIKE ${likePattern(String(value), wildcards)} ${escapeClause(sql)}`,
+    sql`${column} ILIKE ${likePattern(textOf(value), wildcards)} ${escapeClause(sql)}`,
   mysql: loweredLike,
 }
 
@@ -149,7 +151,7 @@ const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
   gt: compare('>'),
   gte: compare('>='),
   in: (condition) =>
-    Arr.match(list(condition), {
+    Array.match(list(condition), {
       onEmpty: () => condition.sql`1 = 0`,
       onNonEmpty: (values) =>
         condition.insensitive
@@ -157,7 +159,7 @@ const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
           : exact[condition.dialect].in(condition, values),
     }),
   not_in: (condition) =>
-    Arr.match(list(condition), {
+    Array.match(list(condition), {
       onEmpty: () => condition.sql`1 = 1`,
       onNonEmpty: (values) =>
         condition.insensitive
@@ -172,7 +174,8 @@ const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
 /** `LOWER()` applies to strings only. */
 const isInsensitive = ({ mode, value }: CleanedWhere): boolean =>
   mode === 'insensitive' &&
-  (Predicate.isString(value) || (Arr.isArray(value) && Arr.every(value as ReadonlyArray<unknown>, Predicate.isString)))
+  (Predicate.isString(value) ||
+    (Array.isArray(value) && Array.every(value as ReadonlyArray<unknown>, Predicate.isString)))
 
 const toFragment =
   (sql: SqlClient.SqlClient, dialect: Dialect) =>
@@ -193,14 +196,14 @@ export const whereCondition = (
 ): Option.Option<Fragment> => {
   const group = (connector: 'AND' | 'OR', combine: (clauses: ReadonlyArray<Fragment>) => Fragment) =>
     pipe(
-      Arr.filter(where, (condition) => (condition.connector === 'OR' ? 'OR' : 'AND') === connector),
-      Arr.map(toFragment(sql, dialect)),
-      Option.liftPredicate(Arr.isReadonlyArrayNonEmpty),
+      Array.filter(where, (condition) => (condition.connector === 'OR' ? 'OR' : 'AND') === connector),
+      Array.map(toFragment(sql, dialect)),
+      Option.liftPredicate(Array.isReadonlyArrayNonEmpty),
       Option.map(combine),
     )
   return pipe(
-    Arr.getSomes([group('AND', (clauses) => sql.and(clauses)), group('OR', (clauses) => sql.or(clauses))]),
-    Option.liftPredicate(Arr.isReadonlyArrayNonEmpty),
+    Array.getSomes([group('AND', (clauses) => sql.and(clauses)), group('OR', (clauses) => sql.or(clauses))]),
+    Option.liftPredicate(Array.isReadonlyArrayNonEmpty),
     Option.map((groups) => sql.and(groups)),
   )
 }

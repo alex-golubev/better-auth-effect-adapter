@@ -1,7 +1,7 @@
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { describe, expect, it, layer } from '@effect/vitest'
 import type { CleanedWhere } from 'better-auth/adapters'
-import { Array as Arr, DateTime, Effect, Option } from 'effect'
+import { Array, DateTime, Effect, Option } from 'effect'
 import { SqlClient } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { toSqlValue, whereCondition } from './where'
@@ -185,7 +185,7 @@ const matching = (conditions: ReadonlyArray<CleanedWhere>) =>
       onNone: () => sql<{ name: string }>`SELECT name FROM t ORDER BY rowid`,
       onSome: (condition) => sql<{ name: string }>`SELECT name FROM t WHERE ${condition} ORDER BY rowid`,
     })
-    return Arr.map(rows, (row) => row.name)
+    return Array.map(rows, (row) => row.name)
   })
 
 // Per test: each test seeds the same table.

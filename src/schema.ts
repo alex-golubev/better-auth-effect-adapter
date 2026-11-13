@@ -1,6 +1,6 @@
 import type { BetterAuthOptions } from 'better-auth'
 import type { BetterAuthDBSchema, DBFieldAttribute, DBTableIndex } from 'better-auth/db'
-import { Array as Arr, Effect, identity, Match, Option, Order, Predicate, pipe, Record, String as Str } from 'effect'
+import { Array, Effect, identity, Match, Option, Order, Predicate, pipe, Record, String } from 'effect'
 import type { SqlClient } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { adapterError, type EffectSqlAdapterError } from './errors'
@@ -91,14 +91,14 @@ const quote =
   (dialect: Dialect) =>
   (identifier: string): string => {
     const char = quoteChars[dialect]
-    return `${char}${Str.replaceAll(char, char + char)(identifier)}${char}`
+    return `${char}${String.replaceAll(char, char + char)(identifier)}${char}`
   }
 
 const unquote =
   (dialect: Dialect) =>
   (quoted: string): string => {
     const char = quoteChars[dialect]
-    return pipe(quoted, Str.slice(1, -1), Str.replaceAll(char + char, char))
+    return pipe(quoted, String.slice(1, -1), String.replaceAll(char + char, char))
   }
 
 /** Names as the client's queries render them. SqlClient doesn't expose `transformQueryNames`, hence the compile. */
@@ -114,29 +114,30 @@ const utf8Length = (value: string): number => new TextEncoder().encode(value).le
 
 const truncateUtf8 = (value: string, maxBytes: number): string =>
   pipe(
-    Arr.fromIterable(value),
-    Arr.scan('', (prefix, character) => prefix + character),
-    Arr.takeWhile((prefix) => utf8Length(prefix) <= maxBytes),
-    Arr.last,
+    Array.fromIterable(value),
+    Array.scan('', (prefix, character) => prefix + character),
+    Array.takeWhile((prefix) => utf8Length(prefix) <= maxBytes),
+    Array.last,
     Option.getOrElse(() => ''),
   )
 
 /** 32-bit FNV-1a over UTF-16 code units, as better-auth computes it. */
 const stableHash = (value: string): string =>
   pipe(
-    Array.from({ length: value.length }, (_, i) => Option.getOrElse(Str.charCodeAt(value, i), () => 0)),
-    Arr.reduce(2166136261, (hash, code) => Math.imul(hash ^ code, 16777619)),
-    (hash) => Str.padStart(8, '0')((hash >>> 0).toString(16)),
+    String.split(value, ''),
+    Array.map((unit) => Option.getOrElse(String.charCodeAt(unit, 0), () => 0)),
+    Array.reduce(2166136261, (hash, code) => Math.imul(hash ^ code, 16777619)),
+    (hash) => String.padStart(8, '0')((hash >>> 0).toString(16)),
   )
 
 /** Same names as better-auth's own migrations. */
 const generatedIndexName = (table: string, columns: ReadonlyArray<string>, unique: boolean): string => {
   const kind = unique ? 'uidx' : 'idx'
-  const name = `${table}_${Arr.join(columns, '_')}_${kind}`
+  const name = `${table}_${Array.join(columns, '_')}_${kind}`
   const suffix = `_${stableHash(name)}_${kind}`
   return utf8Length(name) <= MAX_INDEX_NAME_BYTES
     ? name
-    : `${truncateUtf8(Str.slice(0, -kind.length - 1)(name), MAX_INDEX_NAME_BYTES - utf8Length(suffix))}${suffix}`
+    : `${truncateUtf8(String.slice(0, -kind.length - 1)(name), MAX_INDEX_NAME_BYTES - utf8Length(suffix))}${suffix}`
 }
 
 const validIndexName = (name: string): Effect.Effect<string, EffectSqlAdapterError> =>
@@ -156,7 +157,7 @@ const validIndexName = (name: string): Effect.Effect<string, EffectSqlAdapterErr
 
 const columnName = (fieldName: string, field: DBFieldAttribute): string => field.fieldName || fieldName
 
-const isStringLike = (field: DBFieldAttribute): boolean => field.type === 'string' || Arr.isArray(field.type)
+const isStringLike = (field: DBFieldAttribute): boolean => field.type === 'string' || Array.isArray(field.type)
 
 const isIndexable = (field: DBFieldAttribute): boolean =>
   field.type !== 'json' && field.type !== 'string[]' && field.type !== 'number[]'
@@ -225,21 +226,21 @@ const buildTable = (
   schema: BetterAuthDBSchema,
   rename: (name: string) => string,
   name: string,
-  definitions: Arr.NonEmptyReadonlyArray<TableDefinition>,
+  definitions: Array.NonEmptyReadonlyArray<TableDefinition>,
 ): Effect.Effect<Table, EffectSqlAdapterError> =>
   Effect.map(
     Effect.all(
-      Arr.flatMap(definitions, (definition) =>
-        Arr.map(definition.indexes ?? [], (index) => resolveIndex(name, definition.fields, index)),
+      Array.flatMap(definitions, (definition) =>
+        Array.map(definition.indexes ?? [], (index) => resolveIndex(name, definition.fields, index)),
       ),
     ),
     (indexes) => ({
       name,
       order: definitions[0].order ?? Number.POSITIVE_INFINITY,
-      disableMigrations: Arr.some(definitions, (definition) => definition.disableMigrations === true),
+      disableMigrations: Array.some(definitions, (definition) => definition.disableMigrations === true),
       columns: pipe(
-        Arr.flatMap(definitions, (definition) => Record.toEntries(definition.fields)),
-        Arr.map(([fieldName, field]): readonly [string, Column] => {
+        Array.flatMap(definitions, (definition) => Record.toEntries(definition.fields)),
+        Array.map(([fieldName, field]): readonly [string, Column] => {
           const column = columnName(fieldName, field)
           return [column, { name: column, field, references: resolveReference(schema, rename)(field) }]
         }),
@@ -263,42 +264,42 @@ const buildTables = (
 ): Effect.Effect<ReadonlyArray<Table>, EffectSqlAdapterError> =>
   pipe(
     Effect.forEach(
-      Record.toEntries(Arr.groupBy(Record.values(schema), (definition) => definition.modelName)),
+      Record.toEntries(Array.groupBy(Record.values(schema), (definition) => definition.modelName)),
       ([name, definitions]) => buildTable(schema, rename, name, definitions),
     ),
-    Effect.map(Arr.filter((table) => !table.disableMigrations)),
+    Effect.map(Array.filter((table) => !table.disableMigrations)),
   )
 
 const byDeclaredOrder: Order.Order<Table> = Order.mapInput(Order.Number, (table: Table) => table.order)
 
 const dependencies = (table: Table): ReadonlyArray<string> =>
   pipe(
-    Arr.map(table.columns, ({ references }) => Option.map(references, (foreignKey) => foreignKey.table)),
-    Arr.getSomes,
-    Arr.filter((name) => name !== table.name),
+    Array.map(table.columns, ({ references }) => Option.map(references, (foreignKey) => foreignKey.table)),
+    Array.getSomes,
+    Array.filter((name) => name !== table.name),
   )
 
 const sortByDependencies = (tables: ReadonlyArray<Table>): ReadonlyArray<Table> => {
-  const names = new Set(Arr.map(tables, (table) => table.name))
+  const names = new Set(Array.map(tables, (table) => table.name))
   const isReady = (created: ReadonlySet<string>) => (table: Table) =>
-    Arr.every(dependencies(table), (name) => !names.has(name) || created.has(name))
+    Array.every(dependencies(table), (name) => !names.has(name) || created.has(name))
   const go = (pending: ReadonlyArray<Table>, created: ReadonlySet<string>): ReadonlyArray<Table> =>
     pipe(
-      Arr.findFirst(pending, isReady(created)),
+      Array.findFirst(pending, isReady(created)),
       // A reference cycle can't be ordered: keep the declared order.
-      Option.orElse(() => Arr.head(pending)),
+      Option.orElse(() => Array.head(pending)),
       Option.match({
         onNone: () => [],
         onSome: (next) => [
           next,
           ...go(
-            Arr.filter(pending, (table) => table !== next),
+            Array.filter(pending, (table) => table !== next),
             new Set([...created, next.name]),
           ),
         ],
       }),
     )
-  return go(Arr.sort(tables, byDeclaredOrder), new Set())
+  return go(Array.sort(tables, byDeclaredOrder), new Set())
 }
 
 const MYSQL_INDEX_KEY_BYTES = 3072
@@ -308,13 +309,13 @@ const MYSQL_INDEXED_STRING_LENGTH = 191
 /** MySQL can't index TEXT without a prefix: indexed strings become VARCHAR within InnoDB's key limit. */
 const mysqlIndexedStringLength = (table: Table, column: string): Option.Option<number> => {
   const isStringColumn = (name: string) =>
-    Arr.some(table.columns, (candidate) => candidate.name === name && isStringLike(candidate.field))
+    Array.some(table.columns, (candidate) => candidate.name === name && isStringLike(candidate.field))
   return pipe(
-    Arr.filter(table.indexes, (index) => index.columns.includes(column)),
-    Option.liftPredicate(Arr.isReadonlyArrayNonEmpty),
+    Array.filter(table.indexes, (index) => index.columns.includes(column)),
+    Option.liftPredicate(Array.isReadonlyArrayNonEmpty),
     Option.map(
-      Arr.reduce(MYSQL_INDEXED_STRING_LENGTH, (length, index) => {
-        const strings = Arr.filter(index.columns, isStringColumn).length
+      Array.reduce(MYSQL_INDEXED_STRING_LENGTH, (length, index) => {
+        const strings = Array.filter(index.columns, isStringColumn).length
         const otherBytes = (index.columns.length - strings) * 16
         return strings === 0
           ? length
@@ -359,13 +360,13 @@ const columnType = (
     : pipe(
         Match.value(column.field.type),
         Match.when('string', () => stringTypes[dialect](table, column)),
-        Match.when(Arr.isArray, () => stringTypes[dialect](table, column)),
+        Match.when(Array.isArray, () => stringTypes[dialect](table, column)),
         Match.when('number', () => (column.field.bigint ? 'bigint' : 'integer')),
         Match.when(Match.is('boolean', 'date', 'json', 'string[]', 'number[]'), (kind) => scalarTypes[dialect][kind]),
         Match.option,
         Effect.fromOption,
         Effect.mapError(() =>
-          adapterError(`Unsupported type "${String(column.field.type)}" for column "${table.name}.${column.name}".`),
+          adapterError(`Unsupported type "${column.field.type}" for column "${table.name}.${column.name}".`),
         ),
       )
 
@@ -387,35 +388,35 @@ const columnDefinition = (
           Option.toArray,
         ),
       ],
-      Arr.filter(Predicate.isString),
-      Arr.join(' '),
+      Array.filter(Predicate.isString),
+      Array.join(' '),
     ),
   )
 
 const foreignKeyDefinition = (dialect: Dialect, column: string, foreignKey: ForeignKey): string => {
   const q = quote(dialect)
-  return `FOREIGN KEY (${q(column)}) REFERENCES ${q(foreignKey.table)} (${q(foreignKey.column)}) ON DELETE ${Str.toUpperCase(foreignKey.onDelete)}`
+  return `FOREIGN KEY (${q(column)}) REFERENCES ${q(foreignKey.table)} (${q(foreignKey.column)}) ON DELETE ${String.toUpperCase(foreignKey.onDelete)}`
 }
 
 const createTable = (config: SchemaConfig, table: Table): Effect.Effect<string, EffectSqlAdapterError> => {
   const q = quote(config.dialect)
   const id = (config.rename ?? identity)('id')
-  const columns = Arr.filter(table.columns, (column) => column.name !== id)
+  const columns = Array.filter(table.columns, (column) => column.name !== id)
   return Effect.map(
     Effect.forEach(columns, (column) => columnDefinition(config, table, column)),
     (definitions) => {
       const lines = [
         `${q(id)} ${idColumnTypes[config.dialect][config.idStrategy]}`,
         ...definitions,
-        ...Arr.getSomes(
-          Arr.map(columns, (column) =>
+        ...Array.getSomes(
+          Array.map(columns, (column) =>
             Option.map(column.references, (foreignKey) =>
               foreignKeyDefinition(config.dialect, column.name, foreignKey),
             ),
           ),
         ),
       ]
-      return `CREATE TABLE ${q(table.name)} (\n  ${Arr.join(lines, ',\n  ')}\n)`
+      return `CREATE TABLE ${q(table.name)} (\n  ${Array.join(lines, ',\n  ')}\n)`
     },
   )
 }
@@ -423,13 +424,13 @@ const createTable = (config: SchemaConfig, table: Table): Effect.Effect<string, 
 /** Unique fields get an inline UNIQUE instead. */
 const fieldIndexes = (table: Table): ReadonlyArray<Index> =>
   pipe(
-    Arr.filter(table.columns, ({ field }) => field.index === true && field.unique !== true),
-    Arr.map(({ name }) => ({ name: generatedIndexName(table.name, [name], false), columns: [name], unique: false })),
+    Array.filter(table.columns, ({ field }) => field.index === true && field.unique !== true),
+    Array.map(({ name }) => ({ name: generatedIndexName(table.name, [name], false), columns: [name], unique: false })),
   )
 
 const createIndex = (dialect: Dialect, table: string, index: Index): string => {
   const q = quote(dialect)
-  return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX ${q(index.name)} ON ${q(table)} (${Arr.join(Arr.map(index.columns, q), ', ')})`
+  return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX ${q(index.name)} ON ${q(table)} (${Array.join(Array.map(index.columns, q), ', ')})`
 }
 
 export const schemaStatements = (
@@ -440,14 +441,14 @@ export const schemaStatements = (
     const rename = config.rename ?? identity
     const tables = sortByDependencies(yield* buildTables(renameSchema(schema, rename), rename))
     const createTables = yield* Effect.forEach(tables, (table) => createTable(config, table))
-    const createIndexes = Arr.flatMap(tables, (table) =>
-      Arr.map([...fieldIndexes(table), ...table.indexes], (index) => createIndex(config.dialect, table.name, index)),
+    const createIndexes = Array.flatMap(tables, (table) =>
+      Array.map([...fieldIndexes(table), ...table.indexes], (index) => createIndex(config.dialect, table.name, index)),
     )
     return [...createTables, ...createIndexes]
   })
 
 export const renderSchema = (statements: ReadonlyArray<string>): string =>
-  Arr.match(statements, {
+  Array.match(statements, {
     onEmpty: () => '',
-    onNonEmpty: (nonEmpty) => `${Arr.join(nonEmpty, ';\n\n')};\n`,
+    onNonEmpty: (nonEmpty) => `${Array.join(nonEmpty, ';\n\n')};\n`,
   })

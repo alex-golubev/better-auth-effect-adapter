@@ -7,7 +7,7 @@ import {
   type DBAdapterDebugLogOption,
   type JoinConfig,
 } from 'better-auth/adapters'
-import { Array as Arr, type Context, Data, Effect, Match, Option, Predicate, pipe, Record } from 'effect'
+import { Array, type Context, Data, Effect, Match, Option, Predicate, pipe, Record } from 'effect'
 import { SqlClient, type SqlError } from 'effect/sql'
 import { ambientContext, withContext } from './context'
 import { type Dialect, dialectOf, dialectProfiles } from './dialect'
@@ -45,7 +45,7 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
 const withNumbers = (value: unknown): unknown =>
   Match.value(value).pipe(
     Match.when(Predicate.isBigInt, (n) => Number(n)),
-    Match.when(Arr.isArray, (items) => Arr.map(items, withNumbers)),
+    Match.when(Array.isArray, (items) => Array.map(items, withNumbers)),
     Match.when(isPlainObject, (object) => Record.map(object, withNumbers)),
     Match.orElse((other) => other),
   )
