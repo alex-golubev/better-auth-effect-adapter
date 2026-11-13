@@ -10,7 +10,8 @@ import {
 } from '@better-auth/test-utils/adapter'
 import { ManagedRuntime } from 'effect'
 import { fromContext } from '../src/adapter'
-import { type Database, dialectOf, resetSchema } from './harness'
+import { dialectOf } from '../src/dialect'
+import { type Database, resetSchema } from './harness'
 
 export interface SuiteOptions {
   readonly disableTests?: Readonly<Record<string, boolean>>

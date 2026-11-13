@@ -3,7 +3,7 @@ import type { BetterAuthDBSchema, DBFieldAttribute, DBTableIndex } from 'better-
 import { Array as Arr, Effect, identity, Match, Option, Order, Predicate, pipe, Record } from 'effect'
 import type { SqlClient } from 'effect/sql'
 import type { Dialect } from './dialect'
-import { EffectSqlAdapterError } from './errors'
+import { adapterError, type EffectSqlAdapterError } from './errors'
 
 export type IdStrategy = 'string' | 'serial' | 'uuid'
 
@@ -52,8 +52,6 @@ interface Table {
   readonly indexes: ReadonlyArray<Index>
 }
 
-const schemaError = (message: string): EffectSqlAdapterError => new EffectSqlAdapterError({ message })
-
 const quoteChars: Record<Dialect, string> = { sqlite: '"', pg: '"', mysql: '`' }
 
 const idColumnTypes: Record<Dialect, Record<IdStrategy, string>> = {
@@ -73,12 +71,6 @@ const idColumnTypes: Record<Dialect, Record<IdStrategy, string>> = {
     serial: 'integer NOT NULL AUTO_INCREMENT PRIMARY KEY',
     uuid: 'varchar(36) NOT NULL PRIMARY KEY',
   },
-}
-
-const foreignKeyIdTypes: Record<Dialect, Record<IdStrategy, string>> = {
-  sqlite: { string: 'text', serial: 'integer', uuid: 'text' },
-  pg: { string: 'text', serial: 'integer', uuid: 'uuid' },
-  mysql: { string: 'varchar(255)', serial: 'integer', uuid: 'varchar(36)' },
 }
 
 const scalarTypes: Record<Dialect, Record<ScalarKind, string>> = {
@@ -152,13 +144,13 @@ const validIndexName = (name: string): Effect.Effect<string, EffectSqlAdapterErr
     Effect.filterOrFail(
       (value) => INDEX_NAME_PATTERN.test(value),
       () =>
-        schemaError(
+        adapterError(
           `Index name "${name}" must start with a letter or underscore and contain only letters, digits and underscores.`,
         ),
     ),
     Effect.filterOrFail(
       (value) => utf8Length(value) <= MAX_INDEX_NAME_BYTES,
-      () => schemaError(`Index name "${name}" must be at most ${MAX_INDEX_NAME_BYTES} bytes.`),
+      () => adapterError(`Index name "${name}" must be at most ${MAX_INDEX_NAME_BYTES} bytes.`),
     ),
   )
 
@@ -174,13 +166,13 @@ const resolveIndexColumn =
   (fieldName: string): Effect.Effect<string, EffectSqlAdapterError> =>
     pipe(
       Effect.fromNullishOr(fields[fieldName]),
-      Effect.mapError(() => schemaError(`Index on table "${table}" references unknown field "${fieldName}".`)),
+      Effect.mapError(() => adapterError(`Index on table "${table}" references unknown field "${fieldName}".`)),
       Effect.filterOrFail(isIndexable, () =>
-        schemaError(`Index on table "${table}" references field "${fieldName}", whose type is not indexable.`),
+        adapterError(`Index on table "${table}" references field "${fieldName}", whose type is not indexable.`),
       ),
       Effect.filterOrFail(
         (field) => !unique || field.required !== false,
-        () => schemaError(`Unique index on table "${table}" can only include required fields (got "${fieldName}").`),
+        () => adapterError(`Unique index on table "${table}" can only include required fields (got "${fieldName}").`),
       ),
       Effect.map((field) => columnName(fieldName, field)),
     )
@@ -335,18 +327,27 @@ const mysqlIndexedStringLength = (table: Table, column: string): Option.Option<n
   )
 }
 
-const stringType = (dialect: Dialect, table: Table, column: Column): string =>
-  dialect === 'mysql'
-    ? pipe(
-        mysqlIndexedStringLength(table, column.name),
-        Option.map((length) => `varchar(${length})`),
-        Option.getOrElse(() =>
-          column.field.unique || column.field.index || column.field.sortable || Option.isSome(column.references)
-            ? 'varchar(255)'
-            : 'text',
-        ),
-      )
-    : 'text'
+type ColumnType = (table: Table, column: Column) => string
+
+const mysqlStringType: ColumnType = (table, column) =>
+  pipe(
+    mysqlIndexedStringLength(table, column.name),
+    Option.map((length) => `varchar(${length})`),
+    Option.getOrElse(() =>
+      column.field.unique || column.field.index || column.field.sortable || Option.isSome(column.references)
+        ? 'varchar(255)'
+        : 'text',
+    ),
+  )
+
+const stringTypes: Record<Dialect, ColumnType> = { sqlite: () => 'text', pg: () => 'text', mysql: mysqlStringType }
+
+/** MySQL string ids get the index key budget too: an index over several of them must still fit. */
+const foreignKeyIdTypes: Record<Dialect, Record<IdStrategy, ColumnType>> = {
+  sqlite: { string: () => 'text', serial: () => 'integer', uuid: () => 'text' },
+  pg: { string: () => 'text', serial: () => 'integer', uuid: () => 'uuid' },
+  mysql: { string: mysqlStringType, serial: () => 'integer', uuid: () => 'varchar(36)' },
+}
 
 const columnType = (
   { dialect, idStrategy }: SchemaConfig,
@@ -354,17 +355,17 @@ const columnType = (
   column: Column,
 ): Effect.Effect<string, EffectSqlAdapterError> =>
   Option.exists(column.references, (foreignKey) => foreignKey.toId)
-    ? Effect.succeed(foreignKeyIdTypes[dialect][idStrategy])
+    ? Effect.succeed(foreignKeyIdTypes[dialect][idStrategy](table, column))
     : pipe(
         Match.value(column.field.type),
-        Match.when('string', () => stringType(dialect, table, column)),
-        Match.when(Arr.isArray, () => stringType(dialect, table, column)),
+        Match.when('string', () => stringTypes[dialect](table, column)),
+        Match.when(Arr.isArray, () => stringTypes[dialect](table, column)),
         Match.when('number', () => (column.field.bigint ? 'bigint' : 'integer')),
         Match.when(Match.is('boolean', 'date', 'json', 'string[]', 'number[]'), (kind) => scalarTypes[dialect][kind]),
         Match.option,
         Effect.fromOption,
         Effect.mapError(() =>
-          schemaError(
+          adapterError(
             `Unsupported type ${JSON.stringify(column.field.type)} for column "${table.name}.${column.name}".`,
           ),
         ),

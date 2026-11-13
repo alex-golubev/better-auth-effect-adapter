@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Option, Predicate, pipe } from 'effect'
 import type { SqlClient, SqlError, Statement } from 'effect/sql'
 import type { Dialect } from './dialect'
-import { EffectSqlAdapterError } from './errors'
+import { adapterError, type EffectSqlAdapterError } from './errors'
 
 /** Keyed by physical column names, as the factory expects. */
 export type Row = Record<string, unknown>
@@ -26,8 +26,6 @@ export interface Page {
   readonly limit: number
   readonly offset: Option.Option<number>
 }
-
-const adapterError = (message: string) => new EffectSqlAdapterError({ message })
 
 const empty = (sql: SqlClient.SqlClient): Fragment => sql.literal('')
 
@@ -76,19 +74,27 @@ const executeRaw = (sql: SqlClient.SqlClient, statement: Statement.Statement<Row
     ([query, params]) => sql.unsafe(query, params).raw,
   )
 
-const affectedRowsKeys: Record<Dialect, string> = { sqlite: 'changes', pg: 'rowCount', mysql: 'affectedRows' }
+/** Drivers of one dialect report it under different keys (node:sqlite `changes`, libsql `rowsAffected`, …). */
+const affectedRowsKeys = ['changes', 'rowCount', 'affectedRows', 'rowsAffected'] as const
 
-const affectedRows =
-  (dialect: Dialect) =>
-  (raw: unknown): Effect.Effect<number, EffectSqlAdapterError> =>
-    pipe(
-      Option.liftPredicate(raw, Predicate.hasProperty(affectedRowsKeys[dialect])),
-      Option.map((result) => result[affectedRowsKeys[dialect]]),
-      Option.filter((count) => Predicate.isNumber(count) || Predicate.isBigInt(count)),
-      Option.map(Number),
-      Effect.fromOption,
-      Effect.mapError(() => adapterError(`The ${dialect} driver did not report affected rows`)),
-    )
+export const affectedRows = (raw: unknown): Effect.Effect<number, EffectSqlAdapterError> =>
+  pipe(
+    Arr.findFirst(affectedRowsKeys, (key) =>
+      pipe(
+        Option.liftPredicate(raw, Predicate.hasProperty(key)),
+        Option.map((result) => result[key]),
+        Option.filter((count) => Predicate.isNumber(count) || Predicate.isBigInt(count)),
+      ),
+    ),
+    Option.map(Number),
+    Effect.fromOption,
+    Effect.mapError(() => adapterError('The driver did not report affected rows')),
+  )
+
+export const firstOrNull = (rows: ReadonlyArray<Row>): Row | null => Option.getOrNull(Arr.head(rows))
+
+const firstRow = (rows: ReadonlyArray<Row>, message: string): Effect.Effect<Row, EffectSqlAdapterError> =>
+  Effect.mapError(Effect.fromOption(Arr.head(rows)), () => adapterError(message))
 
 interface Returning {
   readonly insert: (sql: SqlClient.SqlClient, table: string, data: Row) => Operation<Row>
@@ -108,12 +114,14 @@ interface Returning {
   ) => Operation<Row | null>
 }
 
-/** At most one row, atomically, in a single statement. */
-const firstMatch = (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>): Fragment =>
-  sql`${sql('id')} IN (SELECT ${sql('id')} FROM ${sql(table)} ${whereSql(sql, where)} LIMIT 1)`
-
-const firstRow = (rows: ReadonlyArray<Row>, message: string): Effect.Effect<Row, EffectSqlAdapterError> =>
-  Effect.mapError(Effect.fromOption(Arr.head(rows)), () => adapterError(message))
+/**
+ * At most one row, atomically, in a single statement. PostgreSQL re-checks only the outer
+ * condition on a row a concurrent write changed, not the subquery, hence the condition twice.
+ */
+const firstMatch = (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>): Fragment => {
+  const first = sql`${sql('id')} IN (SELECT ${sql('id')} FROM ${sql(table)} ${whereSql(sql, where)} LIMIT 1)`
+  return Option.match(where, { onNone: () => first, onSome: (condition) => sql`${first} AND (${condition})` })
+}
 
 const nativeReturning: Returning = {
   insert: (sql, table, data) =>
@@ -121,24 +129,18 @@ const nativeReturning: Returning = {
       firstRow(rows, `INSERT into "${table}" returned no row`),
     ),
   update: (sql, table, where, data) =>
-    Effect.map(sql<Row>`UPDATE ${sql(table)} SET ${sql.update(data)} ${whereSql(sql, where)} RETURNING *`, (rows) =>
-      Option.getOrNull(Arr.head(rows)),
-    ),
+    Effect.map(sql<Row>`UPDATE ${sql(table)} SET ${sql.update(data)} ${whereSql(sql, where)} RETURNING *`, firstOrNull),
   consume: (sql, table, where) =>
-    Effect.map(sql<Row>`DELETE FROM ${sql(table)} WHERE ${firstMatch(sql, table, where)} RETURNING *`, (rows) =>
-      Option.getOrNull(Arr.head(rows)),
-    ),
+    Effect.map(sql<Row>`DELETE FROM ${sql(table)} WHERE ${firstMatch(sql, table, where)} RETURNING *`, firstOrNull),
   modifyOne: (sql, table, where, assignments) =>
     Effect.map(
       sql<Row>`UPDATE ${sql(table)} SET ${assignments} WHERE ${firstMatch(sql, table, where)} RETURNING *`,
-      (rows) => Option.getOrNull(Arr.head(rows)),
+      firstOrNull,
     ),
 }
 
-const byId = (sql: SqlClient.SqlClient, table: string, id: unknown): Operation<Row | null> =>
-  Effect.map(sql<Row>`SELECT * FROM ${sql(table)} WHERE ${sql('id')} = ${id} LIMIT 1`, (rows) =>
-    Option.getOrNull(Arr.head(rows)),
-  )
+const selectById = (sql: SqlClient.SqlClient, table: string, id: unknown) =>
+  sql<Row>`SELECT * FROM ${sql(table)} WHERE ${sql('id')} = ${id} LIMIT 1`
 
 const lockMatching = (
   sql: SqlClient.SqlClient,
@@ -174,10 +176,7 @@ const mysqlReturning: Returning = {
     Effect.gen(function* () {
       const raw = yield* executeRaw(sql, sql<Row>`INSERT INTO ${sql(table)} ${sql.insert(data)}`)
       const id = yield* insertedId(data, raw)
-      const row = yield* byId(sql, table, id)
-      return yield* Effect.fromNullishOr(row).pipe(
-        Effect.mapError(() => adapterError(`INSERT into "${table}" left no row to return`)),
-      )
+      return yield* firstRow(yield* selectById(sql, table, id), `INSERT into "${table}" left no row to return`)
     }),
   update: (sql, table, where, data) =>
     sql.withTransaction(
@@ -190,7 +189,7 @@ const mysqlReturning: Returning = {
                 'id',
                 Arr.map(matched, (row) => row.id),
               )}`,
-              byId(sql, table, data.id ?? Arr.headNonEmpty(matched).id),
+              Effect.map(selectById(sql, table, data.id ?? Arr.headNonEmpty(matched).id), firstOrNull),
             ),
         }),
       ),
@@ -216,7 +215,7 @@ const mysqlReturning: Returning = {
             onSome: ({ id }) =>
               Effect.andThen(
                 sql`UPDATE ${sql(table)} SET ${assignments} WHERE ${sql('id')} = ${id}`,
-                byId(sql, table, id),
+                Effect.map(selectById(sql, table, id), firstOrNull),
               ),
           }),
       ),
@@ -233,8 +232,9 @@ export const create = (sql: SqlClient.SqlClient, dialect: Dialect, table: string
   returning[dialect].insert(sql, table, data)
 
 export const findOne = (sql: SqlClient.SqlClient, { table, columns, where }: Read): Operation<Row | null> =>
-  Effect.map(sql<Row>`SELECT ${columnsSql(sql, columns)} FROM ${sql(table)} ${whereSql(sql, where)} LIMIT 1`, (rows) =>
-    Option.getOrNull(Arr.head(rows)),
+  Effect.map(
+    sql<Row>`SELECT ${columnsSql(sql, columns)} FROM ${sql(table)} ${whereSql(sql, where)} LIMIT 1`,
+    firstOrNull,
   )
 
 export const findMany = (
@@ -257,26 +257,28 @@ export const update = (
 
 export const updateMany = (
   sql: SqlClient.SqlClient,
-  dialect: Dialect,
   table: string,
   where: Option.Option<Fragment>,
   data: Row,
 ): Operation<number> =>
   Effect.flatMap(
     executeRaw(sql, sql<Row>`UPDATE ${sql(table)} SET ${sql.update(data)} ${whereSql(sql, where)}`),
-    affectedRows(dialect),
+    affectedRows,
   )
 
+/** Without a condition, deletes nothing: `delete` targets one record. `deleteMany` may clear a table. */
 export const remove = (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>): Operation<void> =>
-  Effect.asVoid(sql`DELETE FROM ${sql(table)} ${whereSql(sql, where)}`)
+  Option.match(where, {
+    onNone: () => Effect.void,
+    onSome: (condition) => Effect.asVoid(sql`DELETE FROM ${sql(table)} WHERE ${condition}`),
+  })
 
 export const removeMany = (
   sql: SqlClient.SqlClient,
-  dialect: Dialect,
   table: string,
   where: Option.Option<Fragment>,
 ): Operation<number> =>
-  Effect.flatMap(executeRaw(sql, sql<Row>`DELETE FROM ${sql(table)} ${whereSql(sql, where)}`), affectedRows(dialect))
+  Effect.flatMap(executeRaw(sql, sql<Row>`DELETE FROM ${sql(table)} ${whereSql(sql, where)}`), affectedRows)
 
 export const count = (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>): Operation<number> =>
   Effect.map(

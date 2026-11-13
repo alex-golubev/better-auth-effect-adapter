@@ -1,5 +1,6 @@
-import { Option } from 'effect'
-import type { SqlClient } from 'effect/sql'
+import { Effect, Option } from 'effect'
+import { SqlClient } from 'effect/sql'
+import { adapterError, type EffectSqlAdapterError } from './errors'
 
 export type Dialect = 'sqlite' | 'pg' | 'mysql'
 
@@ -11,6 +12,14 @@ export const detectDialect = (sql: SqlClient.SqlClient): Option.Option<Dialect> 
     mysql: () => Option.some<Dialect>('mysql'),
     orElse: () => Option.none(),
   })
+
+export const dialectOf: Effect.Effect<Dialect, EffectSqlAdapterError, SqlClient.SqlClient> = Effect.flatMap(
+  SqlClient.SqlClient,
+  (sql) =>
+    Effect.mapError(Effect.fromOption(detectDialect(sql)), () =>
+      adapterError(`Unsupported SQL dialect (driver "${sql.driver}"). Supported: PostgreSQL, MySQL, SQLite.`),
+    ),
+)
 
 /** better-auth's factory flags: what is `false`, the factory converts (Date ↔ string, boolean ↔ 0/1, JSON). */
 export interface DialectProfile {

@@ -1,12 +1,9 @@
 import type { JoinConfig } from 'better-auth/adapters'
-import { Array as Arr, Effect, Option, Predicate, pipe } from 'effect'
+import { Array as Arr, Effect, Option, Predicate, pipe, Record } from 'effect'
 import type { SqlClient, SqlError } from 'effect/sql'
 import type { Row } from './operations'
 
 type Join = JoinConfig[string]
-
-/** better-auth's default join limit. */
-const DEFAULT_JOIN_LIMIT = 100
 
 interface Joined {
   readonly table: string
@@ -16,6 +13,28 @@ interface Joined {
 
 /** Keys may differ in JS type, e.g. `1` and `1n`. */
 const keyOf = (value: unknown): string => String(value)
+
+/** Lowercase without underscores: the client's name transforms leave it as is, so it can be dropped. */
+const RANK = 'joinrank'
+
+/** The limit applies per parent, in SQL: a parent with many children doesn't load them all. */
+const joinedRows = (
+  sql: SqlClient.SqlClient,
+  table: string,
+  join: Join,
+  keys: Arr.NonEmptyReadonlyArray<unknown>,
+): Effect.Effect<ReadonlyArray<Row>, SqlError.SqlError> =>
+  Option.match(Option.fromUndefinedOr(join.limit), {
+    onNone: () => sql<Row>`SELECT * FROM ${sql(table)} WHERE ${sql.in(join.on.to, keys)}`,
+    onSome: (limit) =>
+      Effect.map(
+        sql<Row>`SELECT * FROM (
+          SELECT ${sql(table)}.*, ROW_NUMBER() OVER (PARTITION BY ${sql(join.on.to)}) AS ${sql(RANK)}
+          FROM ${sql(table)} WHERE ${sql.in(join.on.to, keys)}
+        ) ${sql('ranked')} WHERE ${sql(RANK)} <= ${limit}`,
+        Arr.map((row) => Record.remove(row, RANK)),
+      ),
+  })
 
 const fetchJoined = (
   sql: SqlClient.SqlClient,
@@ -29,7 +48,7 @@ const fetchJoined = (
     Arr.dedupeWith((a, b) => keyOf(a) === keyOf(b)),
     Arr.match({
       onEmpty: () => Effect.succeed<ReadonlyArray<Row>>([]),
-      onNonEmpty: (keys) => sql<Row>`SELECT * FROM ${sql(table)} WHERE ${sql.in(join.on.to, keys)}`,
+      onNonEmpty: (keys) => joinedRows(sql, table, join, keys),
     }),
     Effect.map((rows) => ({ table, join, byKey: Arr.groupBy(rows, (row) => keyOf(row[join.on.to])) })),
   )
@@ -38,11 +57,7 @@ const related = ({ join, byKey }: Joined, parent: Row): Row | ReadonlyArray<Row>
   const matches = Option.fromUndefinedOr(byKey[keyOf(parent[join.on.from])])
   return join.relation === 'one-to-one'
     ? pipe(matches, Option.map(Arr.headNonEmpty), Option.getOrNull)
-    : pipe(
-        matches,
-        Option.map(Arr.take(join.limit ?? DEFAULT_JOIN_LIMIT)),
-        Option.getOrElse((): ReadonlyArray<Row> => []),
-      )
+    : Option.getOrElse(matches, (): ReadonlyArray<Row> => [])
 }
 
 /** One `IN` query per joined table, not per row. Sequential, so a join takes no extra pool connections. */

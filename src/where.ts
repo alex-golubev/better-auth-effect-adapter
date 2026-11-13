@@ -19,7 +19,7 @@ export const toSqlValue =
   (value: unknown): unknown =>
     Match.value(value).pipe(
       Match.when(Predicate.isDate, (date) => (profile.supportsDates ? date : date.toISOString())),
-      Match.when(Predicate.isBoolean, (bool) => (profile.supportsBooleans ? bool : bool ? 1 : 0)),
+      Match.when(Predicate.isBoolean, (bool) => (profile.supportsBooleans ? bool : Number(bool))),
       Match.orElse((other) => other),
     )
 
@@ -108,13 +108,14 @@ const sensitiveMatch: Record<Dialect, (condition: Condition, wildcards: Wildcard
     sql`${column} LIKE ${binary(sql, likePattern(String(value), wildcards))} ${escapeClause(sql)}`,
 }
 
+const loweredLike = (condition: Condition, wildcards: Wildcards): Fragment =>
+  condition.sql`${lowered(condition)} LIKE LOWER(${likePattern(String(condition.value), wildcards)}) ${escapeClause(condition.sql)}`
+
 const insensitiveMatch: Record<Dialect, (condition: Condition, wildcards: Wildcards) => Fragment> = {
-  sqlite: (condition, wildcards) =>
-    condition.sql`${lowered(condition)} LIKE LOWER(${likePattern(String(condition.value), wildcards)}) ${escapeClause(condition.sql)}`,
+  sqlite: loweredLike,
   pg: ({ sql, column, value }, wildcards) =>
     sql`${column} ILIKE ${likePattern(String(value), wildcards)} ${escapeClause(sql)}`,
-  mysql: (condition, wildcards) =>
-    condition.sql`${lowered(condition)} LIKE LOWER(${likePattern(String(condition.value), wildcards)}) ${escapeClause(condition.sql)}`,
+  mysql: loweredLike,
 }
 
 const patternMatch =
@@ -127,19 +128,22 @@ const compare =
   (condition: Condition): Fragment =>
     condition.sql`${condition.column} ${condition.sql.literal(operator)} ${scalar(condition)}`
 
+const equality =
+  (nullCheck: 'IS NULL' | 'IS NOT NULL', operator: '=' | '<>', exactly: (condition: Condition) => Fragment) =>
+  (condition: Condition): Fragment =>
+    Match.value(condition).pipe(
+      Match.when({ value: Predicate.isNull }, ({ sql, column }): Fragment => sql`${column} ${sql.literal(nullCheck)}`),
+      Match.when(
+        { insensitive: true },
+        (): Fragment =>
+          condition.sql`${lowered(condition)} ${condition.sql.literal(operator)} LOWER(${condition.value})`,
+      ),
+      Match.orElse(exactly),
+    )
+
 const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
-  eq: (condition) =>
-    condition.value === null
-      ? condition.sql`${condition.column} IS NULL`
-      : condition.insensitive
-        ? condition.sql`${lowered(condition)} = LOWER(${condition.value})`
-        : exact[condition.dialect].eq(condition),
-  ne: (condition) =>
-    condition.value === null
-      ? condition.sql`${condition.column} IS NOT NULL`
-      : condition.insensitive
-        ? condition.sql`${lowered(condition)} <> LOWER(${condition.value})`
-        : exact[condition.dialect].ne(condition),
+  eq: equality('IS NULL', '=', (condition) => exact[condition.dialect].eq(condition)),
+  ne: equality('IS NOT NULL', '<>', (condition) => exact[condition.dialect].ne(condition)),
   lt: compare('<'),
   lte: compare('<='),
   gt: compare('>'),

@@ -45,21 +45,24 @@ Then:
   - Before, such calls hung forever on SQLite, and on PostgreSQL and MySQL they ran outside the transaction.
   - Better Auth's own transactions become savepoints inside yours.
 - **Better Auth transactions** run in `sql.withTransaction`. When the callback fails, Better Auth gets its own error (such as an `APIError`) back after the rollback.
-- **`consumeOne` and `incrementOne`** run as a single statement on PostgreSQL and SQLite, and with row locks inside a transaction on MySQL.
-- **Joins** (`advanced.database.joins: true`) take one `IN` query per joined table, instead of a query per row.
+- **`consumeOne` and `incrementOne`** run as a single statement on PostgreSQL and SQLite, and with row locks inside a transaction on MySQL. Their conditions hold under concurrent requests, which Better Auth's database rate limiter relies on.
+- **Joins** (`advanced.database.joins: true`) take one `IN` query per joined table, instead of a query per row, with the per-parent limit applied in SQL.
 - **Schema generation.** `npx auth generate` now produces the SQL schema:
   - for SQLite, PostgreSQL and MySQL;
   - with string, serial or uuid ids;
   - with foreign keys and indexes;
   - with names that follow the client's `transformQueryNames`.
-- **Case-insensitive matching** (`mode: 'insensitive'`) for every operator. Case-sensitive comparisons distinguish case on MySQL too, whatever the column collation.
+- **Case-insensitive matching** (`mode: 'insensitive'`) for `eq`, `ne`, `in`, `not_in`, `contains`, `starts_with` and `ends_with`. Case-sensitive comparisons distinguish case on MySQL too, whatever the column collation.
 - **Exact counts.** `updateMany` and `deleteMany` return exact affected-row counts.
+- **`delete` with an empty `where` deletes nothing.** `deleteMany` with an empty `where` still clears the table, as Better Auth's test suites expect.
+- **PostgreSQL `bigint` columns** come back as numbers rather than JS `BigInt`.
 
 ### Tests
 
 - **Official suites.** Every `@better-auth/test-utils` adapter suite runs against SQLite, PostgreSQL and MySQL, and against SQLite with snake_case name transforms.
 - **Issue #4.** Regression tests run on all three databases.
 - **Shared pool.** A test checks that auth uses the app's PostgreSQL pool and nothing else.
+- **Concurrency.** `incrementOne` and `consumeOne` are tested against concurrent writes on all three databases.
 
 ### Tooling
 

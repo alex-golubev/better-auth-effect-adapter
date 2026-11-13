@@ -152,6 +152,38 @@ describe('schemaStatements', () => {
     }),
   )
 
+  it.effect('sizes MySQL string id foreign keys to fit the index key limit too', () =>
+    Effect.gen(function* () {
+      const options: BetterAuthOptions = {
+        plugins: [
+          {
+            id: 'wide-index',
+            schema: {
+              grant: {
+                fields: {
+                  ownerId: { type: 'string', references: { model: 'user', field: 'id' } },
+                  granteeId: { type: 'string', references: { model: 'user', field: 'id' } },
+                  issuerId: { type: 'string', references: { model: 'user', field: 'id' } },
+                  role: { type: 'string' },
+                },
+                indexes: [{ fields: ['ownerId', 'granteeId', 'issuerId', 'role'] }],
+              },
+            },
+          },
+        ],
+      }
+      const sql = renderSchema(yield* ddl(options, { dialect: 'mysql', idStrategy: 'string' }))
+      // 4 columns × 191 chars × 4 bytes = 3056 bytes, within 3072.
+      expect(sql).toContain('`ownerId` varchar(191) NOT NULL')
+      expect(sql).toContain('`issuerId` varchar(191) NOT NULL')
+      expect(sql).toContain('`role` varchar(191) NOT NULL')
+      // Not indexed: the plain string id type.
+      expect(renderSchema(yield* ddl({}, { dialect: 'mysql', idStrategy: 'string' }))).toContain(
+        '`userId` varchar(255) NOT NULL',
+      )
+    }),
+  )
+
   it.effect('creates field-level indexes for indexed, non-unique fields', () =>
     Effect.gen(function* () {
       const statements = yield* ddl({}, { dialect: 'sqlite', idStrategy: 'string' })

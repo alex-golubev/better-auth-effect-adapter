@@ -5,3 +5,5 @@ export class EffectSqlAdapterError extends Data.TaggedError('EffectSqlAdapterErr
   readonly message: string
   readonly cause?: unknown
 }> {}
+
+export const adapterError = (message: string): EffectSqlAdapterError => new EffectSqlAdapterError({ message })

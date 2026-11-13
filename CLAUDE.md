@@ -25,7 +25,7 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 - `test/` holds integration tests. They run against SQLite (in-memory), plus PostgreSQL and MySQL via testcontainers (`test/harness.ts`).
   - `sqlite.test.ts`, `postgres.test.ts`, `mysql.test.ts` run every official `@better-auth/test-utils` suite through `runOfficialSuites` (`test/suites.ts`).
   - `sqlite-snake-case.test.ts` runs them again with the client's name transforms (`camelToSnake` / `snakeToCamel`).
-  - `schema.test.ts` checks the generated DDL, `issue-4.test.ts` the app-transaction bridge on all three databases, and `pool.test.ts` that auth shares the app's PostgreSQL pool.
+  - `schema.test.ts` checks the generated DDL, `issue-4.test.ts` the app-transaction bridge on all three databases, `operations.test.ts` the guards of `incrementOne`/`consumeOne` under concurrent writes and bigint results, and `pool.test.ts` that auth shares the app's PostgreSQL pool.
 - Tests are written with `@effect/vitest`.
   - Test bodies are effects: `it.effect(name, () => Effect.gen(...))`.
   - Shared services come from `layer(...)` blocks. In `src/`, use `buildPerTest: true` when each test needs a fresh SQLite.
@@ -83,3 +83,7 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - MySQL has no such option.
 - `README.md` documents user-facing behavior and `CHANGELOG.md` the 0.4 → 1.0 migration. Keep both in sync with behavior changes.
 - SQLite (`node:sqlite`): `Date` and plain objects can't be bound as parameters.
+- PostgreSQL re-checks only a statement's outer conditions on a row that a concurrent write changed, not a subquery's. `firstMatch` (`consumeOne` / `incrementOne`) therefore repeats the condition outside its `id IN (SELECT … LIMIT 1)`.
+- `@effect/sql-pg` returns int8 as a JS BigInt. The adapter turns BigInts in result rows into numbers (`withNumbers` in `src/adapter.ts`).
+- Drivers of one dialect report affected rows under different keys (`changes`, `rowCount`, `affectedRows`, `rowsAffected`). `affectedRows` accepts any of them.
+- `delete` with an empty `where` deletes nothing. `deleteMany` with an empty `where` clears the table, as the official suites require.

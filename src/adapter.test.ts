@@ -92,6 +92,23 @@ layer(Sqlite, { buildPerTest: true })('adapter on SQLite', (it) => {
   )
 })
 
+describe('delete', () => {
+  it.effect('deletes nothing on an empty where, unlike deleteMany', () =>
+    Effect.gen(function* () {
+      const adapter = yield* adapterWithSchema({})
+      yield* Effect.forEach(
+        ['a', 'b'],
+        (name) => Effect.promise(() => adapter.create({ model: 'user', data: { name, email: `${name}@example.com` } })),
+        { discard: true },
+      )
+      yield* Effect.promise(() => adapter.delete({ model: 'user', where: [] }))
+      expect(yield* Effect.promise(() => adapter.count({ model: 'user' }))).toBe(2)
+      expect(yield* Effect.promise(() => adapter.deleteMany({ model: 'user', where: [] }))).toBe(2)
+      expect(yield* Effect.promise(() => adapter.count({ model: 'user' }))).toBe(0)
+    }).pipe(Effect.provide(Sqlite)),
+  )
+})
+
 describe('adapter with name transforms', () => {
   it.effect("generates the names the client's transformQueryNames gives the adapter's queries", () =>
     Effect.gen(function* () {
@@ -174,7 +191,7 @@ layer(Sqlite, { buildPerTest: true })('native operations on SQLite', (it) => {
     }),
   )
 
-  it.effect('resolves joins with one query per joined table instead of one per row', () =>
+  it.effect('resolves joins with one query per joined table, limited per parent in SQL', () =>
     Effect.gen(function* () {
       const { adapter, traced } = yield* recorded({ advanced: { database: { joins: true } } })
       const users = yield* Effect.forEach(['a', 'b', 'c'], (name) =>
@@ -203,6 +220,11 @@ layer(Sqlite, { buildPerTest: true })('native operations on SQLite', (it) => {
       )
       expect(found.statements).toHaveLength(2)
       expect(found.result.map((user) => user.session.length)).toEqual([2, 2, 2])
+      const limited = yield* traced(() =>
+        adapter.findMany<{ session: ReadonlyArray<unknown> }>({ model: 'user', join: { session: { limit: 1 } } }),
+      )
+      expect(limited.statements[1]).toMatch(/ROW_NUMBER\(\) OVER/)
+      expect(limited.result.map((user) => user.session.length)).toEqual([1, 1, 1])
     }),
   )
 })

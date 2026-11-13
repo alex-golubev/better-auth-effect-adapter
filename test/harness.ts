@@ -8,23 +8,13 @@ import type { BetterAuthOptions } from 'better-auth'
 import { getAuthTables } from 'better-auth/db'
 import { Effect, Layer, Redacted, String as Str } from 'effect'
 import { SqlClient } from 'effect/sql'
-import { type Dialect, detectDialect } from '../src/dialect'
-import { EffectSqlAdapterError } from '../src/errors'
+import { type Dialect, dialectOf } from '../src/dialect'
 import { clientNames, idStrategyOf, schemaStatements } from '../src/schema'
 
 export type Database = Layer.Layer<SqlClient.SqlClient, unknown>
 
 /** `layer` with the live clock: `TestClock` would freeze timeouts and driver timers. */
 export const withDatabase = <R, E>(database: Layer.Layer<R, E>) => layer(database, { excludeTestServices: true })
-
-export const dialectOf: Effect.Effect<Dialect, EffectSqlAdapterError, SqlClient.SqlClient> = Effect.flatMap(
-  SqlClient.SqlClient,
-  (sql) =>
-    Effect.mapError(
-      Effect.fromOption(detectDialect(sql)),
-      () => new EffectSqlAdapterError({ message: `Unsupported driver "${sql.driver}"` }),
-    ),
-)
 
 const dropTables = (sql: SqlClient.SqlClient, tables: ReadonlyArray<{ readonly name: string }>) =>
   Effect.forEach(tables, ({ name }) => sql`DROP TABLE ${sql(name)}`, { discard: true })
@@ -36,8 +26,7 @@ const dropAllTables: Record<Dialect, Effect.Effect<void, unknown, SqlClient.SqlC
       SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
     `
     yield* sql`PRAGMA foreign_keys = OFF`
-    yield* dropTables(sql, tables)
-    yield* sql`PRAGMA foreign_keys = ON`
+    yield* Effect.ensuring(dropTables(sql, tables), Effect.orDie(sql`PRAGMA foreign_keys = ON`))
   }),
   pg: Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -53,8 +42,7 @@ const dropAllTables: Record<Dialect, Effect.Effect<void, unknown, SqlClient.SqlC
           SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE()
         `
         yield* sql`SET FOREIGN_KEY_CHECKS = 0`
-        yield* dropTables(sql, tables)
-        yield* sql`SET FOREIGN_KEY_CHECKS = 1`
+        yield* Effect.ensuring(dropTables(sql, tables), Effect.orDie(sql`SET FOREIGN_KEY_CHECKS = 1`))
       }),
     )
   }),
@@ -96,9 +84,6 @@ export interface DatabaseOptions {
   readonly preparedStatements?: boolean
 }
 
-const maxConnectionsOption = (maxConnections: number | undefined) =>
-  maxConnections === undefined ? {} : { maxConnections }
-
 export const postgresDatabase = ({ maxConnections, preparedStatements = true }: DatabaseOptions = {}): Database =>
   Layer.unwrap(
     Effect.map(
@@ -107,7 +92,7 @@ export const postgresDatabase = ({ maxConnections, preparedStatements = true }: 
         PgClient.layer({
           url: Redacted.make(started.getConnectionUri()),
           prepare: preparedStatements,
-          ...maxConnectionsOption(maxConnections),
+          maxConnections,
         }),
     ),
   )
@@ -123,7 +108,7 @@ export const mysqlDatabase = ({ maxConnections, preparedStatements = true }: Dat
         MysqlClient.layer({
           url: Redacted.make(utcMysqlUrl(started.getConnectionUri())),
           disablePreparedStatements: !preparedStatements,
-          ...maxConnectionsOption(maxConnections),
+          maxConnections,
         }),
     ),
   )

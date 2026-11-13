@@ -241,7 +241,7 @@ Queries per call, as measured with this adapter:
 | `signUpEmail` | 4, in one transaction | 4                                 |
 
 - **`cookieCache` is the biggest saving.** `getSession` runs on every request, and with the cache enabled it reads the session from a signed cookie.
-- **Joins.** With `advanced.database.joins: true`, Better Auth asks the adapter for related rows together with the main query. The adapter loads them with one `IN` query per joined table, whatever the number of rows. Reading many rows with their relations then costs one query plus one per joined table, instead of one per row. Single-row lookups such as `getSession` stay at 2.
+- **Joins.** With `advanced.database.joins: true`, Better Auth asks the adapter for related rows together with the main query. The adapter loads them with one `IN` query per joined table, whatever the number of rows, and applies the per-parent limit in SQL. Reading many rows with their relations then costs one query plus one per joined table, instead of one per row. Single-row lookups such as `getSession` stay at 2.
   - The join queries run one after another, so a join never takes extra connections from the pool.
 - **`consumeOne` and `incrementOne`** are a single `DELETE` or `UPDATE … RETURNING` on PostgreSQL and SQLite. On MySQL, see below.
 
@@ -250,6 +250,7 @@ Queries per call, as measured with this adapter:
 ### PostgreSQL
 
 - **Ids.** uuid ids come from the database (`gen_random_uuid()`), and serial ids are identity columns.
+- **`bigint` columns** come back as JS numbers, like Better Auth's other number fields. Values above `Number.MAX_SAFE_INTEGER` lose precision.
 - **Schema changes on a running app.** `@effect/sql-pg` caches prepared statements per connection. If a migration changes a column's type while the app is running, cached statements fail, for example with `operator does not exist: uuid = text`. Restart the app, or recreate the pool, after such migrations.
 
 ### MySQL

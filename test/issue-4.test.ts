@@ -7,18 +7,10 @@ import { describe, expect } from '@effect/vitest'
 import { Effect, Exit, Layer } from 'effect'
 import { SqlClient } from 'effect/sql'
 import { bind, run } from '../src/adapter'
-import { dialectProfiles } from '../src/dialect'
+import { dialectOf, dialectProfiles } from '../src/dialect'
 import { toSqlValue } from '../src/where'
 import { Auth, authOptions, signUpBody } from './auth'
-import {
-  type Database,
-  dialectOf,
-  mysqlDatabase,
-  postgresDatabase,
-  resetSchema,
-  sqliteDatabase,
-  withDatabase,
-} from './harness'
+import { type Database, mysqlDatabase, postgresDatabase, resetSchema, sqliteDatabase, withDatabase } from './harness'
 
 const rowsIn = (table: string, where: { readonly column: string; readonly value: string }) =>
   Effect.flatMap(SqlClient.SqlClient, (sql) =>

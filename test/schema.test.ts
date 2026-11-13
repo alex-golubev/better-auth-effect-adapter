@@ -3,18 +3,10 @@ import type { BetterAuthOptions } from 'better-auth'
 import { organization } from 'better-auth/plugins'
 import { Effect } from 'effect'
 import { SqlClient } from 'effect/sql'
-import { dialectProfiles } from '../src/dialect'
+import { type Dialect, dialectOf, dialectProfiles } from '../src/dialect'
 import type { IdStrategy } from '../src/schema'
 import { toSqlValue } from '../src/where'
-import {
-  type Database,
-  dialectOf,
-  mysqlDatabase,
-  postgresDatabase,
-  resetSchema,
-  sqliteDatabase,
-  withDatabase,
-} from './harness'
+import { type Database, mysqlDatabase, postgresDatabase, resetSchema, sqliteDatabase, withDatabase } from './harness'
 
 const generateId = (idStrategy: IdStrategy): BetterAuthOptions['advanced'] =>
   idStrategy === 'string' ? {} : { database: { generateId: idStrategy } }
@@ -47,6 +39,16 @@ const kitchenSink = (idStrategy: IdStrategy): BetterAuthOptions => ({
           },
           indexes: [{ fields: ['tenant', 'slug'], unique: true }],
         },
+        // On MySQL, three string ids and a string in one index must fit the 3072-byte key limit.
+        grant: {
+          fields: {
+            ownerId: { type: 'string', references: { model: 'user', field: 'id' } },
+            granteeId: { type: 'string', references: { model: 'user', field: 'id' } },
+            issuerId: { type: 'string', references: { model: 'user', field: 'id' } },
+            role: { type: 'string' },
+          },
+          indexes: [{ fields: ['ownerId', 'granteeId', 'issuerId', 'role'], unique: true }],
+        },
         oneToOneTable: {
           modelName: 'one_to_one_table',
           fields: {
@@ -65,6 +67,13 @@ const kitchenSink = (idStrategy: IdStrategy): BetterAuthOptions => ({
 })
 
 const strategies: ReadonlyArray<IdStrategy> = ['string', 'serial', 'uuid']
+
+/** The id the app supplies; the database generates serial ids, and uuids where it can. */
+const appId: Record<IdStrategy, (dialect: Dialect, value: string) => { readonly id?: string }> = {
+  string: (_, value) => ({ id: value }),
+  serial: () => ({}),
+  uuid: (dialect) => (dialectProfiles[dialect].supportsUUIDs ? {} : { id: crypto.randomUUID() }),
+}
 
 const expectIdShape: Record<IdStrategy, (id: unknown) => void> = {
   string: (id) => expect(id).toBe('user-1'),
@@ -91,16 +100,9 @@ describe.each(databases)('generated schema on %s', (_, database) => {
         const sql = yield* SqlClient.SqlClient
         const dialect = yield* dialectOf
         const now = toSqlValue(dialectProfiles[dialect])(new Date())
-        // The app generates string ids, and uuids outside PostgreSQL; the database the rest.
-        const appId = (value: string) =>
-          idStrategy === 'string'
-            ? { id: value }
-            : idStrategy === 'uuid' && dialect !== 'pg'
-              ? { id: crypto.randomUUID() }
-              : {}
         const email = `${idStrategy}@example.com`
         yield* sql`INSERT INTO ${sql('user')} ${sql.insert({
-          ...appId('user-1'),
+          ...appId[idStrategy](dialect, 'user-1'),
           name: 'Alice',
           email,
           emailVerified: toSqlValue(dialectProfiles[dialect])(false),
@@ -111,7 +113,7 @@ describe.each(databases)('generated schema on %s', (_, database) => {
           id: unknown
         }>`SELECT ${sql('id')} FROM ${sql('user')} WHERE ${sql('email')} = ${email}`
         yield* sql`INSERT INTO ${sql('session')} ${sql.insert({
-          ...appId('session-1'),
+          ...appId[idStrategy](dialect, 'session-1'),
           expiresAt: now,
           token: `token-${idStrategy}`,
           createdAt: now,
