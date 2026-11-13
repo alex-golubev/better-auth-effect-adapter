@@ -162,7 +162,7 @@ How `run` and `bind` behave:
 
 - **Context.** `run` hands the current Effect context, including an open transaction, to the adapter through `AsyncLocalStorage`. Outside a transaction, it simply runs on the current context.
 - **Nested transactions.** Better Auth's own transactions, such as the one in sign-up, become savepoints inside yours.
-- **Errors.** They fail with `Cause.UnknownError`, and `.cause` holds the original rejection, such as Better Auth's `APIError`.
+- **Errors.** They fail with `AuthCallError`, whose `cause` is the original rejection, such as Better Auth's `APIError`. Catch it with `Effect.catchTag('AuthCallError', …)`.
 - **Other databases.** The caller's context is only used when it holds the adapter's own `SqlClient`. A call made from the context of a different database still goes to the adapter's database.
 
 Caveats:

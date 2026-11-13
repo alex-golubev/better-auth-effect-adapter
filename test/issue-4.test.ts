@@ -121,8 +121,9 @@ describe.each(databases)('issue #4: auth calls inside an app transaction (%s)', 
         yield* resetSchema(authOptions)
         const auth = yield* Auth
         // Another database, without auth tables: auth queries must not go there.
+        const other = yield* Layer.build(SqliteClient.layer({ filename: ':memory:' }))
         yield* run(() => auth.api.signUpEmail({ body: signUpBody('other@example.com') })).pipe(
-          Effect.provide(SqliteClient.layer({ filename: ':memory:' })),
+          Effect.provideContext(other),
         )
         expect(yield* usersWith('other@example.com')).toBe(1)
       }),

@@ -7,3 +7,6 @@ export class EffectSqlAdapterError extends Data.TaggedError('EffectSqlAdapterErr
 }> {}
 
 export const adapterError = (message: string): EffectSqlAdapterError => new EffectSqlAdapterError({ message })
+
+/** A better-auth call made through `run` or `bind` rejected; `cause` is the rejection, e.g. better-auth's `APIError`. */
+export class AuthCallError extends Data.TaggedError('AuthCallError')<{ readonly cause: unknown }> {}

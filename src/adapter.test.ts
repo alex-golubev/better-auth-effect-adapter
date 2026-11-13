@@ -3,8 +3,8 @@ import { describe, expect, it, layer } from '@effect/vitest'
 import type { BetterAuthOptions } from 'better-auth'
 import { Array as Arr, Context, Data, DateTime, Effect, pipe, Ref, String as Str } from 'effect'
 import { SqlClient, SqlError, Statement } from 'effect/sql'
-import { fromContext, make } from './adapter'
-import { EffectSqlAdapterError } from './errors'
+import { fromContext, make, run } from './adapter'
+import { AuthCallError, EffectSqlAdapterError } from './errors'
 
 // Only what dialect detection touches.
 const unsupportedClient = {
@@ -38,36 +38,29 @@ const adapterWithSchema = (options: BetterAuthOptions) =>
     return adapter
   })
 
-describe('make', () => {
-  it.effect('builds an adapter factory on a supported dialect', () =>
-    Effect.gen(function* () {
-      expect(yield* make()).toBeTypeOf('function')
-    }).pipe(Effect.provide(Sqlite)),
-  )
-
-  it.effect('fails with EffectSqlAdapterError on an unsupported dialect', () =>
+describe('unsupported dialects', () => {
+  it.effect('make fails with EffectSqlAdapterError', () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(Effect.provideContext(make(), unsupportedContext))
       expect(error).toBeInstanceOf(EffectSqlAdapterError)
       expect(error.message).toMatch(/driver "mssql"/)
     }),
   )
-})
-
-describe('fromContext', () => {
-  it.effect('builds an adapter factory from a captured context', () =>
-    Effect.gen(function* () {
-      expect(fromContext(yield* Effect.context<SqlClient.SqlClient>())).toBeTypeOf('function')
-    }).pipe(Effect.provide(Sqlite)),
-  )
 
   // fromContext throws: it serves apps outside Effect.
-  it('throws the EffectSqlAdapterError itself on an unsupported dialect', () => {
+  it('fromContext throws the EffectSqlAdapterError itself', () => {
     expect(() => fromContext(unsupportedContext)).toThrow(EffectSqlAdapterError)
   })
 })
 
 layer(Sqlite, { buildPerTest: true })('adapter on SQLite', (it) => {
+  it.effect('builds an adapter factory with make and fromContext', () =>
+    Effect.gen(function* () {
+      expect(yield* make()).toBeTypeOf('function')
+      expect(fromContext(yield* Effect.context<SqlClient.SqlClient>())).toBeTypeOf('function')
+    }),
+  )
+
   it.effect('generates the schema for `npx auth generate`', () =>
     Effect.gen(function* () {
       const adapter = yield* adapterFor({})
@@ -97,9 +90,7 @@ layer(Sqlite, { buildPerTest: true })('adapter on SQLite', (it) => {
       expect(SqlError.isSqlError(cause) && cause.reason._tag).toBe('UniqueViolation')
     }),
   )
-})
 
-describe('delete', () => {
   it.effect('deletes nothing on an empty where, unlike deleteMany', () =>
     Effect.gen(function* () {
       const adapter = yield* adapterWithSchema({})
@@ -112,20 +103,32 @@ describe('delete', () => {
       expect(yield* Effect.promise(() => adapter.count({ model: 'user' }))).toBe(2)
       expect(yield* Effect.promise(() => adapter.deleteMany({ model: 'user', where: [] }))).toBe(2)
       expect(yield* Effect.promise(() => adapter.count({ model: 'user' }))).toBe(0)
-    }).pipe(Effect.provide(Sqlite)),
+    }),
+  )
+
+  it.effect('fails run with AuthCallError, keeping the rejection as its cause', () =>
+    Effect.gen(function* () {
+      const rejection = { code: 'REJECTED' }
+      const error = yield* Effect.flip(run(() => Promise.reject(rejection)))
+      expect(error).toBeInstanceOf(AuthCallError)
+      expect(error.cause).toBe(rejection)
+    }),
   )
 })
 
-describe('adapter with name transforms', () => {
-  it.effect("generates the names the client's transformQueryNames gives the adapter's queries", () =>
-    Effect.gen(function* () {
-      const adapter = yield* adapterFor({})
-      const created = yield* Effect.promise(() => adapter.createSchema?.({}, undefined) ?? Promise.resolve(undefined))
-      expect(created?.code).toContain('"email_verified" integer NOT NULL')
-      expect(created?.code).toContain('FOREIGN KEY ("user_id") REFERENCES "user" ("id")')
-    }).pipe(Effect.provide(SqliteClient.layer({ filename: ':memory:', transformQueryNames: Str.camelToSnake }))),
-  )
-})
+layer(SqliteClient.layer({ filename: ':memory:', transformQueryNames: Str.camelToSnake }))(
+  'adapter with name transforms',
+  (it) => {
+    it.effect("generates the names the client's transformQueryNames gives the adapter's queries", () =>
+      Effect.gen(function* () {
+        const adapter = yield* adapterFor({})
+        const created = yield* Effect.promise(() => adapter.createSchema?.({}, undefined) ?? Promise.resolve(undefined))
+        expect(created?.code).toContain('"email_verified" integer NOT NULL')
+        expect(created?.code).toContain('FOREIGN KEY ("user_id") REFERENCES "user" ("id")')
+      }),
+    )
+  },
+)
 
 const recorded = (options: BetterAuthOptions) =>
   Effect.gen(function* () {

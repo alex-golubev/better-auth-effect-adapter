@@ -47,12 +47,14 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - Escape hatches exist only at the boundaries:
     - better-auth's Promise interface: run effects with `Effect.runPromiseWith`;
     - the synchronous `fromContext`: `Effect.runSync` on top of the Effect-based `make`.
-- `pnpm typecheck` enforces the Effect-native rules of `@effect/tsgo` as errors (`diagnosticSeverity` in `tsconfig.json`, the rules of its `effect-native` preset), in `src/` and `test/` alike:
+- `pnpm typecheck` enforces the rules of `@effect/tsgo`'s `effect-native` and `antipattern` presets as errors (`diagnosticSeverity` in `tsconfig.json`), in `src/` and `test/` alike:
   - no `async` functions or `new Promise`;
   - Effect's `Array`, `String` and `Record` instead of native methods (`.map`, `.join`, `.replace`, `Object.entries`, …);
   - `DateTime`/`Clock` instead of `new Date()`/`Date.now()`;
   - Schema instead of `JSON`;
-  - no global `console`, `fetch`, `Math.random`, timers or `process.env`.
+  - no global `console`, `fetch`, `Math.random`, timers or `process.env`;
+  - `Effect.try`/`tryPromise` always with a `catch` that maps to a typed error, no `try`/`catch` in generators;
+  - `Effect.provide(layer)` only at entry points. In tests, share layers through `layer(...)` blocks, and build a local one with `Layer.build` + `Effect.provideContext`.
 - Biome (`biome.json`): 2-space indent, 120 columns, single quotes, no semicolons, trailing commas.
 - Use `import type` for type-only imports.
 - Unused variables are errors.
