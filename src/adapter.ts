@@ -1,18 +1,23 @@
-import type { BetterAuthOptions, DBAdapter } from 'better-auth'
+import type { BetterAuthOptions, DBAdapter, DBTransactionAdapter } from 'better-auth'
 import {
   type AdapterFactoryCustomizeAdapterCreator,
   type CleanedWhere,
   type CustomAdapter,
   createAdapterFactory,
   type DBAdapterDebugLogOption,
+  type JoinConfig,
 } from 'better-auth/adapters'
-import { type Context, Effect, Option } from 'effect'
-import { SqlClient } from 'effect/sql'
+import { Array as Arr, type Context, Data, Effect, Option, pipe } from 'effect'
+import { SqlClient, type SqlError } from 'effect/sql'
+import { ambientContext, withContext } from './context'
 import { type Dialect, detectDialect, dialectProfiles } from './dialect'
 import { EffectSqlAdapterError } from './errors'
+import { attachJoins } from './joins'
 import * as Operations from './operations'
 import { idStrategyOf, renderSchema, schemaStatements } from './schema'
 import { whereCondition } from './where'
+
+export { type BoundAuth, bind, run } from './context'
 
 export interface EffectSqlAdapterOptions {
   /** Forwarded to better-auth's adapter factory. */
@@ -26,11 +31,25 @@ type Runner = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) => Promis
 
 type AdapterHelpers = Parameters<AdapterFactoryCustomizeAdapterCreator>[0]
 
+type Transaction = <R>(callback: (trx: DBTransactionAdapter) => Promise<R>) => Promise<R>
+
 /** Where `npx auth generate` writes the schema when no `--output` is given. */
 const DEFAULT_SCHEMA_FILE = 'better-auth-schema.sql'
 
 /** The factory's method signatures are generic over the row type; rows come from the database untyped. */
 const rows = <T>(promise: Promise<unknown>): Promise<T> => promise as Promise<T>
+
+const withJoins =
+  (sql: SqlClient.SqlClient, join: JoinConfig | undefined) =>
+  (parents: ReadonlyArray<Operations.Row>): Effect.Effect<ReadonlyArray<Operations.Row>, unknown> =>
+    pipe(
+      Option.fromUndefinedOr(join),
+      Option.filter((config) => Object.keys(config).length > 0),
+      Option.match({
+        onNone: () => Effect.succeed(parents),
+        onSome: (config) => attachJoins(sql, config, parents),
+      }),
+    )
 
 const createCustomAdapter =
   (run: Runner, dialect: Dialect) =>
@@ -54,16 +73,21 @@ const createCustomAdapter =
     return {
       create: ({ model, data }) => rows(withSql((sql) => Operations.create(sql, dialect, model, data))),
 
-      findOne: ({ model, modelKey, where, select }) =>
+      findOne: ({ model, modelKey, where, select, join }) =>
         rows(
           withSql((sql) =>
-            Effect.flatMap(columns(modelKey ?? model, select), (names) =>
-              Operations.findOne(sql, { table: model, columns: names, where: condition(sql, where) }),
+            pipe(
+              columns(modelKey ?? model, select),
+              Effect.flatMap((names) =>
+                Operations.findOne(sql, { table: model, columns: names, where: condition(sql, where) }),
+              ),
+              Effect.flatMap((row) => withJoins(sql, join)(row === null ? [] : [row])),
+              Effect.map((found) => Option.getOrNull(Arr.head(found))),
             ),
           ),
         ),
 
-      findMany: ({ model, modelKey, where, select, sortBy, limit, offset }) =>
+      findMany: ({ model, modelKey, where, select, sortBy, limit, offset, join }) =>
         rows(
           withSql((sql) =>
             Effect.gen(function* () {
@@ -73,11 +97,12 @@ const createCustomAdapter =
                 onSome: ({ field, direction }) =>
                   Effect.map(column(modelKey ?? model, field), (name) => Option.some({ column: name, direction })),
               })
-              return yield* Operations.findMany(
+              const found = yield* Operations.findMany(
                 sql,
                 { table: model, columns: names, where: condition(sql, where) },
                 { sort, limit, offset: Option.fromUndefinedOr(offset) },
               )
+              return yield* withJoins(sql, join)(found)
             }),
           ),
         ),
@@ -93,6 +118,14 @@ const createCustomAdapter =
       deleteMany: ({ model, where }) =>
         withSql((sql) => Operations.removeMany(sql, dialect, model, condition(sql, where))),
 
+      consumeOne: ({ model, where }) =>
+        rows(withSql((sql) => Operations.consumeOne(sql, dialect, model, condition(sql, where)))),
+
+      incrementOne: ({ model, where, increment, set }) =>
+        rows(
+          withSql((sql) => Operations.incrementOne(sql, dialect, model, condition(sql, where), increment, set ?? {})),
+        ),
+
       count: ({ model, where }) => withSql((sql) => Operations.count(sql, model, condition(sql, where))),
 
       createSchema: ({ file, tables }) =>
@@ -105,21 +138,59 @@ const createCustomAdapter =
     }
   }
 
+/** A rejection of better-auth's transaction callback, handed back to it unchanged after the rollback. */
+class CallbackRejected extends Data.TaggedError('CallbackRejected')<{ readonly cause: unknown }> {}
+
+/**
+ * Runs `evaluate` inside `sql.withTransaction` on the ambient context. Inside an app
+ * transaction (bridged with `run`) this becomes a savepoint on the app's connection.
+ * Adapter calls made by `evaluate` see the transaction through the bridged context.
+ */
+const inTransaction = <A>(
+  evaluate: () => PromiseLike<A>,
+): Effect.Effect<A, CallbackRejected | SqlError.SqlError, SqlClient.SqlClient> =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) =>
+    sql.withTransaction(
+      Effect.flatMap(Effect.context<SqlClient.SqlClient>(), (context) =>
+        Effect.tryPromise({
+          try: () => withContext(context, evaluate),
+          catch: (cause) => new CallbackRejected({ cause }),
+        }),
+      ),
+    ),
+  )
+
 const buildAdapter = (
-  context: Context.Context<SqlClient.SqlClient>,
+  root: Context.Context<SqlClient.SqlClient>,
   dialect: Dialect,
   options: EffectSqlAdapterOptions,
-): EffectSqlAdapter =>
-  createAdapterFactory({
-    config: {
-      adapterId: 'effect-sql',
-      adapterName: 'Effect SQL',
-      debugLogs: options.debugLogs ?? false,
-      supportsNumericIds: true,
-      ...dialectProfiles[dialect],
-    },
-    adapter: createCustomAdapter((effect) => Effect.runPromiseWith(context)(effect), dialect),
-  })
+): EffectSqlAdapter => {
+  const runner: Runner = (effect) => Effect.runPromiseWith(ambientContext(root))(effect)
+  const factory = (transaction: false | Transaction) =>
+    createAdapterFactory({
+      config: {
+        adapterId: 'effect-sql',
+        adapterName: 'Effect SQL',
+        debugLogs: options.debugLogs ?? false,
+        supportsNumericIds: true,
+        ...dialectProfiles[dialect],
+        transaction,
+      },
+      adapter: createCustomAdapter(runner, dialect),
+    })
+  return (authOptions) => {
+    // Better-auth's own transactions; nesting is handled by better-auth (it reuses an open one).
+    const transactional = factory(false)(authOptions)
+    const transaction: Transaction = (callback) =>
+      runner(
+        inTransaction(() => callback(transactional)).pipe(
+          // Better-auth (and its callers) expect the callback's own error, e.g. an APIError.
+          Effect.catchTag('CallbackRejected', (rejected) => Effect.fail(rejected.cause)),
+        ),
+      )
+    return factory(transaction)(authOptions)
+  }
+}
 
 /** Creates the adapter from the current Effect context. Fails on unsupported dialects. */
 export const make = (

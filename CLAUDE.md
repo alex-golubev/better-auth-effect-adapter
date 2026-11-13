@@ -50,6 +50,10 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 - `sql('col')` is an Identifier, not a Fragment, so wrap it as `` sql`${sql('col')}` `` inside `sql.and`/`sql.or`. Note that `sql.or([])` compiles to `1=1`.
 - In better-auth 1.7, `select` and `sortBy` arrive as logical names; map them with `getFieldName({ model: modelKey, field })`. `in`/`not_in` arrays are never value-converted by the factory.
 - Inside an app transaction, adapter calls must run on the caller's context via the ALS bridge. On the root context they deadlock on SQLite and escape the transaction on PG/MySQL. This is GitHub issue #4.
+  - `src/context.ts` holds the bridge. `run(() => promise)` and `bind(auth).use/handler` put the caller's Effect context into an `AsyncLocalStorage`.
+  - The adapter's runner uses that context only when it carries the adapter's own `SqlClient` (`ambientContext`); otherwise it uses the root context.
+  - `config.transaction` runs better-auth's callback inside `sql.withTransaction` on that ambient context, so inside an app transaction it becomes a savepoint.
+  - `test/issue-4.test.ts` is the regression test.
 - MySQL: `LIMIT` and `OFFSET` go through `sql.literal`. There is no `RETURNING`; emulate it inside a transaction.
 - `effect/sql` and the `@effect/sql-*` drivers are marked `@stability unstable`, so they may break between minor versions. They are allow-listed in `tsconfig.json` (`allowedUnstableApis`).
 - `@effect/sql-pg` caches prepared statements per connection by SQL text (`prepare: true` by default). If a table is recreated with different column types on a live pool, the cached parameter types go stale (`operator does not exist: uuid = text`). The test harness uses `prepare: false` for this reason.

@@ -107,7 +107,20 @@ interface Returning {
     where: Option.Option<Fragment>,
     data: Row,
   ) => Operation<Row | null>
+  /** Deletes at most one matching row and returns it. */
+  readonly consume: (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>) => Operation<Row | null>
+  /** Applies `assignments` to at most one matching row and returns it. */
+  readonly modifyOne: (
+    sql: SqlClient.SqlClient,
+    table: string,
+    where: Option.Option<Fragment>,
+    assignments: Fragment,
+  ) => Operation<Row | null>
 }
+
+/** `id IN (first matching id)`: a single statement touches at most one row, atomically. */
+const firstMatch = (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>): Fragment =>
+  sql`${sql('id')} IN (SELECT ${sql('id')} FROM ${sql(table)} ${whereSql(sql, where)} LIMIT 1)`
 
 const firstRow = (rows: ReadonlyArray<Row>, message: string): Effect.Effect<Row, EffectSqlAdapterError> =>
   Effect.mapError(Effect.fromOption(Arr.head(rows)), () => adapterError(message))
@@ -121,6 +134,15 @@ const nativeReturning: Returning = {
     Effect.map(sql<Row>`UPDATE ${sql(table)} SET ${sql.update(data)} ${whereSql(sql, where)} RETURNING *`, (rows) =>
       Option.getOrNull(Arr.head(rows)),
     ),
+  consume: (sql, table, where) =>
+    Effect.map(sql<Row>`DELETE FROM ${sql(table)} WHERE ${firstMatch(sql, table, where)} RETURNING *`, (rows) =>
+      Option.getOrNull(Arr.head(rows)),
+    ),
+  modifyOne: (sql, table, where, assignments) =>
+    Effect.map(
+      sql<Row>`UPDATE ${sql(table)} SET ${assignments} WHERE ${firstMatch(sql, table, where)} RETURNING *`,
+      (rows) => Option.getOrNull(Arr.head(rows)),
+    ),
 }
 
 const unsupported = (feature: string): Operation<never> => Effect.fail(adapterError(`${feature} is not supported yet`))
@@ -131,6 +153,8 @@ const returning: Record<Dialect, Returning> = {
   mysql: {
     insert: () => unsupported('INSERT on MySQL'),
     update: () => unsupported('UPDATE on MySQL'),
+    consume: () => unsupported('consumeOne on MySQL'),
+    modifyOne: () => unsupported('incrementOne on MySQL'),
   },
 }
 
@@ -196,3 +220,29 @@ export const count = (sql: SqlClient.SqlClient, table: string, where: Option.Opt
         Option.getOrElse(() => 0),
       ),
   )
+
+export const consumeOne = (
+  sql: SqlClient.SqlClient,
+  dialect: Dialect,
+  table: string,
+  where: Option.Option<Fragment>,
+): Operation<Row | null> => returning[dialect].consume(sql, table, where)
+
+/** `col = col + n` for each increment, `col = value` for each `set` entry. */
+const assignments = (sql: SqlClient.SqlClient, increment: Record<string, number>, set: Row): Fragment =>
+  sql.join(
+    ', ',
+    false,
+  )([
+    ...Arr.map(Object.entries(increment), ([column, by]) => sql`${sql(column)} = ${sql(column)} + ${by}`),
+    ...Arr.map(Object.entries(set), ([column, value]) => sql`${sql(column)} = ${value}`),
+  ])
+
+export const incrementOne = (
+  sql: SqlClient.SqlClient,
+  dialect: Dialect,
+  table: string,
+  where: Option.Option<Fragment>,
+  increment: Record<string, number>,
+  set: Row,
+): Operation<Row | null> => returning[dialect].modifyOne(sql, table, where, assignments(sql, increment, set))
