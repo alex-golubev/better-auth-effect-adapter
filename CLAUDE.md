@@ -24,6 +24,7 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 - `src/` holds the library. Unit tests sit next to the code as `*.test.ts`.
 - `test/` holds integration tests. They run against SQLite (in-memory), plus PostgreSQL and MySQL via testcontainers (`test/harness.ts`).
   - `sqlite.test.ts`, `postgres.test.ts`, `mysql.test.ts` run every official `@better-auth/test-utils` suite through `runOfficialSuites` (`test/suites.ts`).
+  - `sqlite-snake-case.test.ts` runs them again with the client's name transforms (`camelToSnake` / `snakeToCamel`).
   - `schema.test.ts` checks the generated DDL, `issue-4.test.ts` the app-transaction bridge on all three databases, and `pool.test.ts` that auth shares the app's PostgreSQL pool.
   - Databases are opened with top-level `await` (concurrently via `Promise.all`) and disposed in `afterAll`, which avoids `let` + `beforeAll`.
 
@@ -68,4 +69,10 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - MySQL 8.4 fails intermittently, depending on which pooled connection still holds the old statement. Inserts fail with "Data too long", updates with "Truncated incorrect DOUBLE value", and reads silently match nothing.
   - The harness option `preparedStatements: false` (PG `prepare: false`, MySQL `disablePreparedStatements: true`) is used by the tests that recreate tables with different id types: the official suites and `schema.test.ts`. The others keep the drivers' default.
 - The DDL generator (`src/schema.ts`) is also what integration tests use to build schemas. `test/harness.ts` → `resetSchema(options)` drops all tables and recreates them.
+  - `SchemaConfig.rename` maps better-auth's names to physical ones before index names are computed. `createSchema` and the harness pass `clientNames(sql, dialect)`, the client's own rendering of an identifier, so the DDL follows `transformQueryNames` exactly as queries do.
+- Driver name transforms (`transformQueryNames` / `transformResultNames`) work with the adapter, with three caveats:
+  - better-auth's own `fields` names must stay round-trip safe (camelCase), since results come back through `transformResultNames`;
+  - PostgreSQL needs `transformJson: false`, or keys inside jsonb are renamed on read;
+  - MySQL has no such option.
+- `README.md` documents user-facing behavior and `CHANGELOG.md` the 0.4 → 1.0 migration. Keep both in sync with behavior changes.
 - SQLite (`node:sqlite`): `Date` and plain objects can't be bound as parameters.

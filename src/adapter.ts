@@ -14,7 +14,7 @@ import { type Dialect, detectDialect, dialectProfiles } from './dialect'
 import { EffectSqlAdapterError } from './errors'
 import { attachJoins } from './joins'
 import * as Operations from './operations'
-import { idStrategyOf, renderSchema, schemaStatements } from './schema'
+import { clientNames, idStrategyOf, renderSchema, schemaStatements } from './schema'
 import { whereCondition } from './where'
 
 export { type BoundAuth, bind, run } from './context'
@@ -129,11 +129,15 @@ const createCustomAdapter =
       count: ({ model, where }) => withSql((sql) => Operations.count(sql, model, condition(sql, where))),
 
       createSchema: ({ file, tables }) =>
-        run(
-          Effect.map(schemaStatements(tables, { dialect, idStrategy: idStrategyOf(options) }), (statements) => ({
-            code: renderSchema(statements),
-            path: file ?? DEFAULT_SCHEMA_FILE,
-          })),
+        withSql((sql) =>
+          Effect.map(
+            schemaStatements(tables, {
+              dialect,
+              idStrategy: idStrategyOf(options),
+              rename: clientNames(sql, dialect),
+            }),
+            (statements) => ({ code: renderSchema(statements), path: file ?? DEFAULT_SCHEMA_FILE }),
+          ),
         ),
     }
   }

@@ -1,6 +1,6 @@
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import type { BetterAuthOptions } from 'better-auth'
-import { Context, Effect, ManagedRuntime, Ref } from 'effect'
+import { Context, Effect, ManagedRuntime, Ref, String as Str } from 'effect'
 import { SqlClient, SqlError, Statement } from 'effect/sql'
 import { describe, expect, it } from 'vitest'
 import { fromContext, make } from './adapter'
@@ -63,6 +63,17 @@ describe('adapter on SQLite', () => {
       code: expect.stringContaining('CREATE TABLE "user"'),
     })
     expect(await adapter.createSchema?.({}, '/tmp/out/schema.sql')).toMatchObject({ path: '/tmp/out/schema.sql' })
+    await runtime.dispose()
+  })
+
+  it("generates the names the client's transformQueryNames gives the adapter's queries", async () => {
+    const runtime = ManagedRuntime.make(
+      SqliteClient.layer({ filename: ':memory:', transformQueryNames: Str.camelToSnake }),
+    )
+    const adapter = fromContext(await runtime.context())({})
+    const created = await adapter.createSchema?.({}, undefined)
+    expect(created?.code).toContain('"email_verified" integer NOT NULL')
+    expect(created?.code).toContain('FOREIGN KEY ("user_id") REFERENCES "user" ("id")')
     await runtime.dispose()
   })
 

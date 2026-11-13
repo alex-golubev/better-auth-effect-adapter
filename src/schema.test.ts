@@ -75,6 +75,20 @@ describe('schemaStatements', () => {
     expect(sql).toContain('FOREIGN KEY (`one_to_one`) REFERENCES `user_custom` (`email_address`) ON DELETE CASCADE')
   })
 
+  it('applies rename to tables, columns, foreign keys and index names', () => {
+    const sql = renderSchema(
+      ddl(
+        { session: { modelName: 'authSession' } },
+        { dialect: 'pg', idStrategy: 'string', rename: (name) => name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`) },
+      ),
+    )
+    expect(sql).toContain('CREATE TABLE "auth_session"')
+    expect(sql).toContain('"email_verified" boolean NOT NULL')
+    expect(sql).toContain('FOREIGN KEY ("user_id") REFERENCES "user" ("id") ON DELETE CASCADE')
+    expect(sql).toContain('CREATE INDEX "auth_session_user_id_idx" ON "auth_session" ("user_id")')
+    expect(sql).not.toMatch(/[a-z][A-Z]/)
+  })
+
   it('maps foreign keys to id with the id strategy', () => {
     const fk = (dialect: Dialect, idStrategy: IdStrategy) =>
       ddl({}, { dialect, idStrategy })

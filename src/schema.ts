@@ -1,6 +1,7 @@
 import type { BetterAuthOptions } from 'better-auth'
 import type { BetterAuthDBSchema, DBFieldAttribute, DBTableIndex } from 'better-auth/db'
-import { Array as Arr, Effect, Match, Option, Order, Predicate, pipe } from 'effect'
+import { Array as Arr, Effect, identity, Match, Option, Order, Predicate, pipe, Record } from 'effect'
+import type { SqlClient } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { EffectSqlAdapterError } from './errors'
 
@@ -10,6 +11,11 @@ export type IdStrategy = 'string' | 'serial' | 'uuid'
 export interface SchemaConfig {
   readonly dialect: Dialect
   readonly idStrategy: IdStrategy
+  /**
+   * Maps better-auth's table and column names to physical ones, the way the SqlClient's
+   * `transformQueryNames` maps them in queries (see `clientNames`). Identity by default.
+   */
+  readonly rename?: (name: string) => string
 }
 
 export const idStrategyOf = (options: BetterAuthOptions): IdStrategy =>
@@ -103,6 +109,23 @@ const quote =
     const char = quoteChars[dialect]
     return `${char}${identifier.replaceAll(char, char + char)}${char}`
   }
+
+/** Reverses `quote`. */
+const unquote =
+  (dialect: Dialect) =>
+  (quoted: string): string => {
+    const char = quoteChars[dialect]
+    return quoted.slice(1, -1).replaceAll(char + char, char)
+  }
+
+/**
+ * How `sql` names a table or column: its `transformQueryNames` applied, if it has one.
+ * Generating the schema with it makes the DDL use the names the adapter's queries use.
+ */
+export const clientNames =
+  (sql: SqlClient.SqlClient, dialect: Dialect) =>
+  (name: string): string =>
+    unquote(dialect)(sql`${sql(name)}`.compile()[0])
 
 // ---------------------------------------------------------------------------
 // Index naming. Mirrors better-auth's own migration naming, so schemas from
@@ -200,7 +223,7 @@ const resolveIndex = (
   })
 
 const resolveReference =
-  (schema: BetterAuthDBSchema) =>
+  (schema: BetterAuthDBSchema, rename: (name: string) => string) =>
   (field: DBFieldAttribute): Option.Option<ForeignKey> =>
     Option.map(Option.fromUndefinedOr(field.references), (reference) => {
       const target = Option.fromUndefinedOr(schema[reference.model])
@@ -209,15 +232,15 @@ const resolveReference =
         table: pipe(
           target,
           Option.map((definition) => definition.modelName),
-          Option.getOrElse(() => reference.model),
+          Option.getOrElse(() => rename(reference.model)),
         ),
         column: toId
-          ? 'id'
+          ? rename('id')
           : pipe(
               target,
               Option.flatMap((definition) => Option.fromUndefinedOr(definition.fields[reference.field])),
               Option.map((targetField) => columnName(reference.field, targetField)),
-              Option.getOrElse(() => reference.field),
+              Option.getOrElse(() => rename(reference.field)),
             ),
         onDelete: reference.onDelete ?? 'cascade',
         toId,
@@ -227,6 +250,7 @@ const resolveReference =
 /** Several schema keys may share a table name; their fields merge, later ones winning (as in better-auth). */
 const buildTable = (
   schema: BetterAuthDBSchema,
+  rename: (name: string) => string,
   name: string,
   definitions: Arr.NonEmptyReadonlyArray<TableDefinition>,
 ): Effect.Effect<Table, EffectSqlAdapterError> =>
@@ -244,7 +268,7 @@ const buildTable = (
         Arr.flatMap(definitions, (definition) => Object.entries(definition.fields)),
         Arr.map(([fieldName, field]): readonly [string, Column] => {
           const column = columnName(fieldName, field)
-          return [column, { name: column, field, references: resolveReference(schema)(field) }]
+          return [column, { name: column, field, references: resolveReference(schema, rename)(field) }]
         }),
         (entries) => Object.values(Object.fromEntries(entries)),
       ),
@@ -252,11 +276,22 @@ const buildTable = (
     }),
   )
 
-const buildTables = (schema: BetterAuthDBSchema): Effect.Effect<ReadonlyArray<Table>, EffectSqlAdapterError> =>
+/** Applies `rename` to every table and column name, so everything downstream sees physical names. */
+const renameSchema = (schema: BetterAuthDBSchema, rename: (name: string) => string): BetterAuthDBSchema =>
+  Record.map(schema, (definition) => ({
+    ...definition,
+    modelName: rename(definition.modelName),
+    fields: Record.map(definition.fields, (field, key) => ({ ...field, fieldName: rename(columnName(key, field)) })),
+  }))
+
+const buildTables = (
+  schema: BetterAuthDBSchema,
+  rename: (name: string) => string,
+): Effect.Effect<ReadonlyArray<Table>, EffectSqlAdapterError> =>
   pipe(
     Effect.forEach(
       Object.entries(Arr.groupBy(Object.values(schema), (definition) => definition.modelName)),
-      ([name, definitions]) => buildTable(schema, name, definitions),
+      ([name, definitions]) => buildTable(schema, rename, name, definitions),
     ),
     Effect.map(Arr.filter((table) => !table.disableMigrations)),
   )
@@ -392,12 +427,13 @@ const foreignKeyDefinition = (dialect: Dialect, column: string, foreignKey: Fore
 
 const createTable = (config: SchemaConfig, table: Table): Effect.Effect<string, EffectSqlAdapterError> => {
   const q = quote(config.dialect)
-  const columns = Arr.filter(table.columns, (column) => column.name !== 'id')
+  const id = (config.rename ?? identity)('id')
+  const columns = Arr.filter(table.columns, (column) => column.name !== id)
   return Effect.map(
     Effect.forEach(columns, (column) => columnDefinition(config, table, column)),
     (definitions) => {
       const lines = [
-        `${q('id')} ${idColumnTypes[config.dialect][config.idStrategy]}`,
+        `${q(id)} ${idColumnTypes[config.dialect][config.idStrategy]}`,
         ...definitions,
         ...Arr.getSomes(
           Arr.map(columns, (column) =>
@@ -433,7 +469,8 @@ export const schemaStatements = (
   config: SchemaConfig,
 ): Effect.Effect<ReadonlyArray<string>, EffectSqlAdapterError> =>
   Effect.gen(function* () {
-    const tables = sortByDependencies(yield* buildTables(schema))
+    const rename = config.rename ?? identity
+    const tables = sortByDependencies(yield* buildTables(renameSchema(schema, rename), rename))
     const createTables = yield* Effect.forEach(tables, (table) => createTable(config, table))
     const createIndexes = Arr.flatMap(tables, (table) =>
       Arr.map([...fieldIndexes(table), ...table.indexes], (index) => createIndex(config.dialect, table.name, index)),

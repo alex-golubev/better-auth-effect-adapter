@@ -5,10 +5,10 @@ import { MySqlContainer } from '@testcontainers/mysql'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import type { BetterAuthOptions } from 'better-auth'
 import { getAuthTables } from 'better-auth/db'
-import { type Context, Effect, type Layer, ManagedRuntime, Redacted } from 'effect'
+import { type Context, Effect, type Layer, ManagedRuntime, Redacted, String as Str } from 'effect'
 import { SqlClient } from 'effect/sql'
 import type { Dialect } from '../src/dialect'
-import { idStrategyOf, schemaStatements } from '../src/schema'
+import { clientNames, idStrategyOf, schemaStatements } from '../src/schema'
 
 /** A database the integration tests run against, plus schema management. */
 export interface TestDatabase {
@@ -73,6 +73,7 @@ const fromLayer = async (
           const statements = yield* schemaStatements(getAuthTables(options), {
             dialect,
             idStrategy: idStrategyOf(options),
+            rename: clientNames(sql, dialect),
           })
           yield* dropAllTables[dialect]
           yield* Effect.forEach(statements, (statement) => sql.unsafe(statement), { discard: true })
@@ -85,8 +86,16 @@ const fromLayer = async (
   }
 }
 
-export const sqliteDatabase = (): Promise<TestDatabase> =>
-  fromLayer('sqlite', SqliteClient.layer({ filename: ':memory:' }))
+export interface SqliteOptions {
+  /** snake_case columns through the client's `transformQueryNames` / `transformResultNames`. */
+  readonly snakeCase?: boolean
+}
+
+const snakeCaseNames = (snakeCase: boolean) =>
+  snakeCase ? { transformQueryNames: Str.camelToSnake, transformResultNames: Str.snakeToCamel } : {}
+
+export const sqliteDatabase = ({ snakeCase = false }: SqliteOptions = {}): Promise<TestDatabase> =>
+  fromLayer('sqlite', SqliteClient.layer({ filename: ':memory:', ...snakeCaseNames(snakeCase) }))
 
 export interface DatabaseOptions {
   readonly maxConnections?: number
