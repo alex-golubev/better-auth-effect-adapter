@@ -44,10 +44,17 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - integration tests with Docker;
   - the Bun smoke test on the latest Bun.
 - `compat.yml` runs the full suite weekly on the latest `effect` and `better-auth` releases, since the peer ranges let users upgrade before we do. Dependabot (`.github/dependabot.yml`) groups effect, better-auth and tooling updates.
+- `main` is protected by a ruleset.
+  - Changes go through a PR, which needs the five CI jobs green and an up-to-date branch.
+  - No force pushes or deletion.
+  - The admin can bypass only through a PR, so direct pushes fail, including mine.
+  - Work on a branch, `gh pr create`, wait for the checks, then merge (rebase keeps the commits).
+- Release tags `v*` can't be moved or deleted (ruleset "release tags").
 - `release.yml` publishes on a pushed `vX.Y.Z` tag.
   - npm trusted publishing (OIDC): no token is stored, and the package gets provenance.
   - It creates the GitHub release from the version's `CHANGELOG.md` section.
-  - To release: set the version, date the changelog, commit as `X.Y.Z`, then push the tag. Details are in `CONTRIBUTING.md`.
+  - To release: merge a PR with the `X.Y.Z` commit, then tag the merged commit and push the tag. Details are in `CONTRIBUTING.md`.
+  - Trusted publishing must be set up on npmjs.com, under the package's Settings → Trusted Publisher → GitHub Actions, with direct `npm publish` allowed. Do it right before a release: an unused setup expires after 2 days.
 - Commits must use the GitHub noreply email; this repo's local git config sets it. GitHub rejects pushes that expose the private one.
 
 ## Code style
