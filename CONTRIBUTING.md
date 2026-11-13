@@ -27,12 +27,16 @@ pnpm install   # also patches TypeScript with @effect/tsgo (the `prepare` script
   - Behaviour that depends on the database belongs in an integration test that runs on all three.
 - **Commits.** Use a prefix: `feat:`, `fix:`, `docs:`, `test:`, `chore:` or `style:`.
 
+## Pull requests
+
+`main` is protected. Changes go through a pull request, which merges once every CI job passes (Node 22/24/26, integration tests, Bun) and the branch is up to date with `main`.
+
 ## Releasing
 
 Maintainers only:
 
-1. Set the version in `package.json` and date its section in `CHANGELOG.md`.
-2. Commit that as `X.Y.Z`.
-3. Push the tag `vX.Y.Z`.
+1. Open a pull request with one commit `X.Y.Z` that sets the version in `package.json` and dates its section in `CHANGELOG.md`.
+2. Merge it with a rebase, so the commit keeps its name.
+3. Tag the merged commit `vX.Y.Z` and push the tag. Release tags can't be moved or deleted.
 
 The release workflow then checks, builds and publishes to npm with provenance, and creates the GitHub release from the changelog.
