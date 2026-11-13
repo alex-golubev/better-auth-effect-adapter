@@ -8,7 +8,7 @@ import {
   transactionsTestSuite,
   uuidTestSuite,
 } from '@better-auth/test-utils/adapter'
-import { ManagedRuntime } from 'effect'
+import { Effect, ManagedRuntime } from 'effect'
 import { fromContext } from '../src/adapter'
 import { dialectOf } from '../src/dialect'
 import { type Database, resetSchema } from './harness'
@@ -18,27 +18,27 @@ export interface SuiteOptions {
 }
 
 /** The suites drive Vitest through a Promise API, hence a `ManagedRuntime` rather than a `layer`. */
-export const runOfficialSuites = async (
-  database: Database,
-  { disableTests = {} }: SuiteOptions = {},
-): Promise<void> => {
-  const runtime = ManagedRuntime.make(database)
-  const context = await runtime.context()
-  const suiteOptions = { disableTests }
-  const { execute } = await testAdapter({
-    adapter: () => fromContext(context, { debugLogs: { isRunningAdapterTests: true } }),
-    runMigrations: (options) => runtime.runPromise(resetSchema(options)),
-    tests: [
-      normalTestSuite(suiteOptions),
-      transactionsTestSuite(suiteOptions),
-      authFlowTestSuite(suiteOptions),
-      numberIdTestSuite(suiteOptions),
-      joinsTestSuite(suiteOptions),
-      uuidTestSuite(suiteOptions),
-      caseInsensitiveTestSuite(suiteOptions),
-    ],
-    prefixTests: await runtime.runPromise(dialectOf),
-    onFinish: () => runtime.dispose(),
+export const runOfficialSuites = (database: Database, { disableTests = {} }: SuiteOptions = {}) =>
+  Effect.gen(function* () {
+    const runtime = ManagedRuntime.make(database)
+    const context = yield* runtime.contextEffect
+    const suiteOptions = { disableTests }
+    const { execute } = yield* Effect.promise(() =>
+      testAdapter({
+        adapter: () => fromContext(context, { debugLogs: { isRunningAdapterTests: true } }),
+        runMigrations: (options) => runtime.runPromise(resetSchema(options)),
+        tests: [
+          normalTestSuite(suiteOptions),
+          transactionsTestSuite(suiteOptions),
+          authFlowTestSuite(suiteOptions),
+          numberIdTestSuite(suiteOptions),
+          joinsTestSuite(suiteOptions),
+          uuidTestSuite(suiteOptions),
+          caseInsensitiveTestSuite(suiteOptions),
+        ],
+        prefixTests: runtime.runSync(dialectOf),
+        onFinish: () => runtime.dispose(),
+      }),
+    )
+    yield* Effect.sync(execute)
   })
-  execute()
-}

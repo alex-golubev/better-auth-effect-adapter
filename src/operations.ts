@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Option, Predicate, pipe } from 'effect'
+import { Array as Arr, Effect, Option, Predicate, pipe, Record } from 'effect'
 import type { SqlClient, SqlError, Statement } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { adapterError, type EffectSqlAdapterError } from './errors'
@@ -303,8 +303,8 @@ const assignments = (sql: SqlClient.SqlClient, increment: Record<string, number>
     ', ',
     false,
   )([
-    ...Arr.map(Object.entries(increment), ([column, by]) => sql`${sql(column)} = ${sql(column)} + ${by}`),
-    ...Arr.map(Object.entries(set), ([column, value]) => sql`${sql(column)} = ${value}`),
+    ...Arr.map(Record.toEntries(increment), ([column, by]) => sql`${sql(column)} = ${sql(column)} + ${by}`),
+    ...Arr.map(Record.toEntries(set), ([column, value]) => sql`${sql(column)} = ${value}`),
   ])
 
 export const incrementOne = (

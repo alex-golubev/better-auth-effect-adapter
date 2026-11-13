@@ -1,4 +1,5 @@
+import { Effect } from 'effect'
 import { sqliteDatabase } from './harness'
 import { runOfficialSuites } from './suites'
 
-await runOfficialSuites(sqliteDatabase())
+await Effect.runPromise(runOfficialSuites(sqliteDatabase()))

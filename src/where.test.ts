@@ -1,7 +1,7 @@
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { describe, expect, it, layer } from '@effect/vitest'
 import type { CleanedWhere } from 'better-auth/adapters'
-import { Effect, Option } from 'effect'
+import { Array as Arr, DateTime, Effect, Option } from 'effect'
 import { SqlClient } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { toSqlValue, whereCondition } from './where'
@@ -137,7 +137,7 @@ layer(Sqlite)('whereCondition: SQL', (it) => {
 
 describe('toSqlValue', () => {
   it('converts what the dialect cannot bind', () => {
-    const date = new Date('2026-01-02T03:04:05.000Z')
+    const date = DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-02T03:04:05.000Z'))
     const sqlite = toSqlValue({
       supportsDates: false,
       supportsBooleans: false,
@@ -166,13 +166,14 @@ describe('toSqlValue', () => {
 
 const names = ['abc', 'ABC', '50%_off', '50 off', 'a*b', 'axb']
 
+const day = (n: number) => DateTime.makeUnsafe({ year: 2026, month: 1, day: n })
+
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
   yield* sql`CREATE TABLE t (name text, flag integer, at text)`
   yield* Effect.forEach(
     names,
-    (name, i) =>
-      sql`INSERT INTO t ${sql.insert({ name, flag: i % 2, at: new Date(Date.UTC(2026, 0, i + 1)).toISOString() })}`,
+    (name, i) => sql`INSERT INTO t ${sql.insert({ name, flag: i % 2, at: DateTime.formatIso(day(i + 1)) })}`,
     { discard: true },
   )
 })
@@ -184,7 +185,7 @@ const matching = (conditions: ReadonlyArray<CleanedWhere>) =>
       onNone: () => sql<{ name: string }>`SELECT name FROM t ORDER BY rowid`,
       onSome: (condition) => sql<{ name: string }>`SELECT name FROM t WHERE ${condition} ORDER BY rowid`,
     })
-    return rows.map((row) => row.name)
+    return Arr.map(rows, (row) => row.name)
   })
 
 // Per test: each test seeds the same table.
@@ -217,8 +218,8 @@ layer(Sqlite, { buildPerTest: true })('whereCondition: behavior on SQLite', (it)
       expect(
         yield* matching([
           where('at', 'in', [
-            new Date(Date.UTC(2026, 0, 1)),
-            new Date(Date.UTC(2026, 0, 2)),
+            DateTime.toDateUtc(day(1)),
+            DateTime.toDateUtc(day(2)),
           ] as unknown as CleanedWhere['value']),
         ]),
       ).toEqual(['abc', 'ABC'])

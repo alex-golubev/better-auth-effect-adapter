@@ -1,7 +1,7 @@
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { describe, expect, it, layer } from '@effect/vitest'
 import type { BetterAuthOptions } from 'better-auth'
-import { Context, Data, Effect, Ref, String as Str } from 'effect'
+import { Array as Arr, Context, Data, DateTime, Effect, pipe, Ref, String as Str } from 'effect'
 import { SqlClient, SqlError, Statement } from 'effect/sql'
 import { fromContext, make } from './adapter'
 import { EffectSqlAdapterError } from './errors'
@@ -18,7 +18,14 @@ const Sqlite = SqliteClient.layer({ filename: ':memory:' })
 
 class Rejected extends Data.TaggedError('Rejected')<{ readonly cause: unknown }> {}
 
-const statementsOf = (code: string) => code.split(';').filter((statement) => statement.trim() !== '')
+const statementsOf = (code: string) =>
+  pipe(
+    code,
+    Str.split(';'),
+    Arr.filter((statement) => Str.isNonEmpty(Str.trim(statement))),
+  )
+
+const inAMinute = Effect.map(DateTime.now, (now) => DateTime.toDateUtc(DateTime.add(now, { minutes: 1 })))
 
 const adapterFor = (options: BetterAuthOptions) => Effect.map(make(), (adapter) => adapter(options))
 
@@ -142,7 +149,7 @@ layer(Sqlite, { buildPerTest: true })('native operations on SQLite', (it) => {
   it.effect('consumeOne deletes and returns one row in a single statement, then finds nothing', () =>
     Effect.gen(function* () {
       const { adapter, traced } = yield* recorded({})
-      const expiresAt = new Date(Date.now() + 60_000)
+      const expiresAt = yield* inAMinute
       yield* Effect.forEach(
         ['1', '2'],
         (value) =>
@@ -194,13 +201,15 @@ layer(Sqlite, { buildPerTest: true })('native operations on SQLite', (it) => {
   it.effect('resolves joins with one query per joined table, limited per parent in SQL', () =>
     Effect.gen(function* () {
       const { adapter, traced } = yield* recorded({ advanced: { database: { joins: true } } })
+      const expiresAt = yield* inAMinute
+      const updatedAt = DateTime.toDateUtc(yield* DateTime.now)
       const users = yield* Effect.forEach(['a', 'b', 'c'], (name) =>
         Effect.promise(() =>
           adapter.create<{ id: string }>({ model: 'user', data: { name, email: `${name}@example.com` } }),
         ),
       )
       yield* Effect.forEach(
-        users.flatMap((user) => [1, 2].map((n) => ({ user, n }))),
+        Arr.flatMap(users, (user) => Arr.map([1, 2], (n) => ({ user, n }))),
         ({ user, n }) =>
           Effect.promise(() =>
             adapter.create({
@@ -208,8 +217,8 @@ layer(Sqlite, { buildPerTest: true })('native operations on SQLite', (it) => {
               data: {
                 userId: user.id,
                 token: `${user.id}-${n}`,
-                expiresAt: new Date(Date.now() + 60_000),
-                updatedAt: new Date(),
+                expiresAt,
+                updatedAt,
               },
             }),
           ),
@@ -219,12 +228,12 @@ layer(Sqlite, { buildPerTest: true })('native operations on SQLite', (it) => {
         adapter.findMany<{ session: ReadonlyArray<unknown> }>({ model: 'user', join: { session: true } }),
       )
       expect(found.statements).toHaveLength(2)
-      expect(found.result.map((user) => user.session.length)).toEqual([2, 2, 2])
+      expect(Arr.map(found.result, (user) => user.session.length)).toEqual([2, 2, 2])
       const limited = yield* traced(() =>
         adapter.findMany<{ session: ReadonlyArray<unknown> }>({ model: 'user', join: { session: { limit: 1 } } }),
       )
       expect(limited.statements[1]).toMatch(/ROW_NUMBER\(\) OVER/)
-      expect(limited.result.map((user) => user.session.length)).toEqual([1, 1, 1])
+      expect(Arr.map(limited.result, (user) => user.session.length)).toEqual([1, 1, 1])
     }),
   )
 })

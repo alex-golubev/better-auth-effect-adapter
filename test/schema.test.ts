@@ -1,7 +1,7 @@
 import { describe, expect } from '@effect/vitest'
 import type { BetterAuthOptions } from 'better-auth'
 import { organization } from 'better-auth/plugins'
-import { Effect } from 'effect'
+import { DateTime, Effect } from 'effect'
 import { SqlClient } from 'effect/sql'
 import { type Dialect, dialectOf, dialectProfiles } from '../src/dialect'
 import type { IdStrategy } from '../src/schema'
@@ -68,11 +68,19 @@ const kitchenSink = (idStrategy: IdStrategy): BetterAuthOptions => ({
 
 const strategies: ReadonlyArray<IdStrategy> = ['string', 'serial', 'uuid']
 
+type Row = 'user-1' | 'session-1'
+
+/** Fixed: the schema is rebuilt for every test. */
+const uuids: Record<Row, string> = {
+  'user-1': '00000000-0000-4000-8000-000000000001',
+  'session-1': '00000000-0000-4000-8000-000000000002',
+}
+
 /** The id the app supplies; the database generates serial ids, and uuids where it can. */
-const appId: Record<IdStrategy, (dialect: Dialect, value: string) => { readonly id?: string }> = {
-  string: (_, value) => ({ id: value }),
+const appId: Record<IdStrategy, (dialect: Dialect, row: Row) => { readonly id?: string }> = {
+  string: (_, row) => ({ id: row }),
   serial: () => ({}),
-  uuid: (dialect) => (dialectProfiles[dialect].supportsUUIDs ? {} : { id: crypto.randomUUID() }),
+  uuid: (dialect, row) => (dialectProfiles[dialect].supportsUUIDs ? {} : { id: uuids[row] }),
 }
 
 const expectIdShape: Record<IdStrategy, (id: unknown) => void> = {
@@ -99,7 +107,7 @@ describe.each(databases)('generated schema on %s', (_, database) => {
         yield* resetSchema({ advanced: generateId(idStrategy) })
         const sql = yield* SqlClient.SqlClient
         const dialect = yield* dialectOf
-        const now = toSqlValue(dialectProfiles[dialect])(new Date())
+        const now = toSqlValue(dialectProfiles[dialect])(DateTime.toDateUtc(yield* DateTime.now))
         const email = `${idStrategy}@example.com`
         yield* sql`INSERT INTO ${sql('user')} ${sql.insert({
           ...appId[idStrategy](dialect, 'user-1'),

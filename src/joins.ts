@@ -67,7 +67,7 @@ export const attachJoins = (
   parents: ReadonlyArray<Row>,
 ): Effect.Effect<ReadonlyArray<Row>, SqlError.SqlError> =>
   Effect.map(
-    Effect.forEach(Object.entries(join), ([table, entry]) => fetchJoined(sql, table, entry, parents)),
+    Effect.forEach(Record.toEntries(join), ([table, entry]) => fetchJoined(sql, table, entry, parents)),
     (joined) =>
       Arr.map(parents, (parent) =>
         Arr.reduce(joined, parent, (row, entry) => ({ ...row, [entry.table]: related(entry, parent) })),

@@ -5,7 +5,7 @@
  */
 import { describe, expect } from '@effect/vitest'
 import type { BetterAuthOptions } from 'better-auth'
-import { Deferred, Effect, Fiber } from 'effect'
+import { DateTime, Deferred, Effect, Fiber } from 'effect'
 import { SqlClient } from 'effect/sql'
 import { make, run } from '../src/adapter'
 import { type Database, mysqlDatabase, postgresDatabase, resetSchema, sqliteDatabase, withDatabase } from './harness'
@@ -68,7 +68,7 @@ describe.each(databases)('operations under concurrency (%s)', (_, database) => {
       Effect.gen(function* () {
         yield* resetSchema(options)
         const adapter = (yield* make())(options)
-        const expiresAt = new Date(Date.now() + 60_000)
+        const expiresAt = DateTime.toDateUtc(DateTime.add(yield* DateTime.now, { minutes: 1 }))
         yield* Effect.promise(() =>
           adapter.create({ model: 'verification', data: { identifier: 'otp', value: '1', expiresAt } }),
         )

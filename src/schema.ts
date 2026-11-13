@@ -1,6 +1,6 @@
 import type { BetterAuthOptions } from 'better-auth'
 import type { BetterAuthDBSchema, DBFieldAttribute, DBTableIndex } from 'better-auth/db'
-import { Array as Arr, Effect, identity, Match, Option, Order, Predicate, pipe, Record } from 'effect'
+import { Array as Arr, Effect, identity, Match, Option, Order, Predicate, pipe, Record, String as Str } from 'effect'
 import type { SqlClient } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { adapterError, type EffectSqlAdapterError } from './errors'
@@ -91,14 +91,14 @@ const quote =
   (dialect: Dialect) =>
   (identifier: string): string => {
     const char = quoteChars[dialect]
-    return `${char}${identifier.replaceAll(char, char + char)}${char}`
+    return `${char}${Str.replaceAll(char, char + char)(identifier)}${char}`
   }
 
 const unquote =
   (dialect: Dialect) =>
   (quoted: string): string => {
     const char = quoteChars[dialect]
-    return quoted.slice(1, -1).replaceAll(char + char, char)
+    return pipe(quoted, Str.slice(1, -1), Str.replaceAll(char + char, char))
   }
 
 /** Names as the client's queries render them. SqlClient doesn't expose `transformQueryNames`, hence the compile. */
@@ -124,19 +124,19 @@ const truncateUtf8 = (value: string, maxBytes: number): string =>
 /** 32-bit FNV-1a over UTF-16 code units, as better-auth computes it. */
 const stableHash = (value: string): string =>
   pipe(
-    Array.from({ length: value.length }, (_, i) => value.charCodeAt(i)),
+    Array.from({ length: value.length }, (_, i) => Option.getOrElse(Str.charCodeAt(value, i), () => 0)),
     Arr.reduce(2166136261, (hash, code) => Math.imul(hash ^ code, 16777619)),
-    (hash) => (hash >>> 0).toString(16).padStart(8, '0'),
+    (hash) => Str.padStart(8, '0')((hash >>> 0).toString(16)),
   )
 
 /** Same names as better-auth's own migrations. */
 const generatedIndexName = (table: string, columns: ReadonlyArray<string>, unique: boolean): string => {
   const kind = unique ? 'uidx' : 'idx'
-  const name = `${table}_${columns.join('_')}_${kind}`
+  const name = `${table}_${Arr.join(columns, '_')}_${kind}`
   const suffix = `_${stableHash(name)}_${kind}`
   return utf8Length(name) <= MAX_INDEX_NAME_BYTES
     ? name
-    : `${truncateUtf8(name.slice(0, -kind.length - 1), MAX_INDEX_NAME_BYTES - utf8Length(suffix))}${suffix}`
+    : `${truncateUtf8(Str.slice(0, -kind.length - 1)(name), MAX_INDEX_NAME_BYTES - utf8Length(suffix))}${suffix}`
 }
 
 const validIndexName = (name: string): Effect.Effect<string, EffectSqlAdapterError> =>
@@ -238,12 +238,12 @@ const buildTable = (
       order: definitions[0].order ?? Number.POSITIVE_INFINITY,
       disableMigrations: Arr.some(definitions, (definition) => definition.disableMigrations === true),
       columns: pipe(
-        Arr.flatMap(definitions, (definition) => Object.entries(definition.fields)),
+        Arr.flatMap(definitions, (definition) => Record.toEntries(definition.fields)),
         Arr.map(([fieldName, field]): readonly [string, Column] => {
           const column = columnName(fieldName, field)
           return [column, { name: column, field, references: resolveReference(schema, rename)(field) }]
         }),
-        (entries) => Object.values(Object.fromEntries(entries)),
+        (entries) => Record.values(Record.fromEntries(entries)),
       ),
       indexes,
     }),
@@ -263,7 +263,7 @@ const buildTables = (
 ): Effect.Effect<ReadonlyArray<Table>, EffectSqlAdapterError> =>
   pipe(
     Effect.forEach(
-      Object.entries(Arr.groupBy(Object.values(schema), (definition) => definition.modelName)),
+      Record.toEntries(Arr.groupBy(Record.values(schema), (definition) => definition.modelName)),
       ([name, definitions]) => buildTable(schema, rename, name, definitions),
     ),
     Effect.map(Arr.filter((table) => !table.disableMigrations)),
@@ -365,9 +365,7 @@ const columnType = (
         Match.option,
         Effect.fromOption,
         Effect.mapError(() =>
-          adapterError(
-            `Unsupported type ${JSON.stringify(column.field.type)} for column "${table.name}.${column.name}".`,
-          ),
+          adapterError(`Unsupported type "${String(column.field.type)}" for column "${table.name}.${column.name}".`),
         ),
       )
 
@@ -377,24 +375,26 @@ const columnDefinition = (
   column: Column,
 ): Effect.Effect<string, EffectSqlAdapterError> =>
   Effect.map(columnType(config, table, column), (type) =>
-    [
-      quote(config.dialect)(column.name),
-      type,
-      column.field.required !== false && 'NOT NULL',
-      column.field.unique === true && 'UNIQUE',
-      ...pipe(
-        timestampDefaults[config.dialect],
-        Option.filter(() => column.field.type === 'date' && Predicate.isFunction(column.field.defaultValue)),
-        Option.toArray,
-      ),
-    ]
-      .filter(Predicate.isString)
-      .join(' '),
+    pipe(
+      [
+        quote(config.dialect)(column.name),
+        type,
+        column.field.required !== false && 'NOT NULL',
+        column.field.unique === true && 'UNIQUE',
+        ...pipe(
+          timestampDefaults[config.dialect],
+          Option.filter(() => column.field.type === 'date' && Predicate.isFunction(column.field.defaultValue)),
+          Option.toArray,
+        ),
+      ],
+      Arr.filter(Predicate.isString),
+      Arr.join(' '),
+    ),
   )
 
 const foreignKeyDefinition = (dialect: Dialect, column: string, foreignKey: ForeignKey): string => {
   const q = quote(dialect)
-  return `FOREIGN KEY (${q(column)}) REFERENCES ${q(foreignKey.table)} (${q(foreignKey.column)}) ON DELETE ${foreignKey.onDelete.toUpperCase()}`
+  return `FOREIGN KEY (${q(column)}) REFERENCES ${q(foreignKey.table)} (${q(foreignKey.column)}) ON DELETE ${Str.toUpperCase(foreignKey.onDelete)}`
 }
 
 const createTable = (config: SchemaConfig, table: Table): Effect.Effect<string, EffectSqlAdapterError> => {
@@ -415,7 +415,7 @@ const createTable = (config: SchemaConfig, table: Table): Effect.Effect<string, 
           ),
         ),
       ]
-      return `CREATE TABLE ${q(table.name)} (\n  ${lines.join(',\n  ')}\n)`
+      return `CREATE TABLE ${q(table.name)} (\n  ${Arr.join(lines, ',\n  ')}\n)`
     },
   )
 }
@@ -429,7 +429,7 @@ const fieldIndexes = (table: Table): ReadonlyArray<Index> =>
 
 const createIndex = (dialect: Dialect, table: string, index: Index): string => {
   const q = quote(dialect)
-  return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX ${q(index.name)} ON ${q(table)} (${Arr.map(index.columns, q).join(', ')})`
+  return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX ${q(index.name)} ON ${q(table)} (${Arr.join(Arr.map(index.columns, q), ', ')})`
 }
 
 export const schemaStatements = (
@@ -449,5 +449,5 @@ export const schemaStatements = (
 export const renderSchema = (statements: ReadonlyArray<string>): string =>
   Arr.match(statements, {
     onEmpty: () => '',
-    onNonEmpty: (nonEmpty) => `${nonEmpty.join(';\n\n')};\n`,
+    onNonEmpty: (nonEmpty) => `${Arr.join(nonEmpty, ';\n\n')};\n`,
   })

@@ -4,7 +4,7 @@
  */
 import { SqliteClient } from '@effect/sql-sqlite-node'
 import { describe, expect } from '@effect/vitest'
-import { Effect, Exit, Layer } from 'effect'
+import { DateTime, Effect, Exit, Layer, Schema } from 'effect'
 import { SqlClient } from 'effect/sql'
 import { bind, run } from '../src/adapter'
 import { dialectOf, dialectProfiles } from '../src/dialect'
@@ -25,7 +25,7 @@ const usersWith = (email: string) => rowsIn('user', { column: 'email', value: em
 const appWrite = (identifier: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
-    const now = toSqlValue(dialectProfiles[yield* dialectOf])(new Date())
+    const now = toSqlValue(dialectProfiles[yield* dialectOf])(DateTime.toDateUtc(yield* DateTime.now))
     yield* sql`INSERT INTO ${sql('verification')} ${sql.insert({
       id: identifier,
       identifier,
@@ -96,11 +96,14 @@ describe.each(databases)('issue #4: auth calls inside an app transaction (%s)', 
         const exit = yield* inAppTransaction(
           Effect.gen(function* () {
             yield* bound.use((api) => api.signUpEmail({ body: signUpBody('use@example.com') }))
+            const body = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(
+              signUpBody('handler@example.com'),
+            )
             const response = yield* bound.handler(
               new Request('http://localhost:3000/api/auth/sign-up/email', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify(signUpBody('handler@example.com')),
+                body,
               }),
             )
             const visible = yield* usersWith('handler@example.com')

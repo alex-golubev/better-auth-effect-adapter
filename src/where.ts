@@ -1,5 +1,5 @@
 import type { CleanedWhere, WhereOperator } from 'better-auth/adapters'
-import { Array as Arr, Match, Option, Predicate, pipe } from 'effect'
+import { Array as Arr, Match, Option, Predicate, pipe, String as Str } from 'effect'
 import type { SqlClient, Statement } from 'effect/sql'
 import { type Dialect, type DialectProfile, dialectProfiles } from './dialect'
 
@@ -91,11 +91,11 @@ interface Wildcards {
 const LIKE_ESCAPE = '!'
 
 const likePattern = (value: string, { before, after }: Wildcards): string =>
-  `${before ? '%' : ''}${value.replace(/[!%_]/g, `${LIKE_ESCAPE}$&`)}${after ? '%' : ''}`
+  `${before ? '%' : ''}${Str.replace(/[!%_]/g, `${LIKE_ESCAPE}$&`)(value)}${after ? '%' : ''}`
 
 /** GLOB has no ESCAPE clause: `[*]` matches `*` literally. */
 const globPattern = (value: string, { before, after }: Wildcards): string =>
-  `${before ? '*' : ''}${value.replace(/[[*?]/g, '[$&]')}${after ? '*' : ''}`
+  `${before ? '*' : ''}${Str.replace(/[[*?]/g, '[$&]')(value)}${after ? '*' : ''}`
 
 const escapeClause = (sql: SqlClient.SqlClient): Fragment => sql.literal(`ESCAPE '${LIKE_ESCAPE}'`)
 
