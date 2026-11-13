@@ -1,10 +1,20 @@
+import { describe, expect } from '@effect/vitest'
 import type { BetterAuthOptions } from 'better-auth'
 import { organization } from 'better-auth/plugins'
 import { Effect } from 'effect'
 import { SqlClient } from 'effect/sql'
-import { afterAll, describe, expect, it } from 'vitest'
+import { dialectProfiles } from '../src/dialect'
 import type { IdStrategy } from '../src/schema'
-import { mysqlDatabase, postgresDatabase, sqliteDatabase, type TestDatabase } from './harness'
+import { toSqlValue } from '../src/where'
+import {
+  type Database,
+  dialectOf,
+  mysqlDatabase,
+  postgresDatabase,
+  resetSchema,
+  sqliteDatabase,
+  withDatabase,
+} from './harness'
 
 const generateId = (idStrategy: IdStrategy): BetterAuthOptions['advanced'] =>
   idStrategy === 'string' ? {} : { database: { generateId: idStrategy } }
@@ -63,41 +73,37 @@ const expectIdShape: Record<IdStrategy, (id: unknown) => void> = {
 }
 
 // Each test recreates the tables with another id type on the same pool (see `preparedStatements`).
-const databases: ReadonlyArray<TestDatabase> = await Promise.all([
-  sqliteDatabase(),
-  postgresDatabase({ preparedStatements: false }),
-  mysqlDatabase({ preparedStatements: false }),
-])
+const databases: ReadonlyArray<readonly [string, Database]> = [
+  ['sqlite', sqliteDatabase()],
+  ['pg', postgresDatabase({ preparedStatements: false })],
+  ['mysql', mysqlDatabase({ preparedStatements: false })],
+]
 
-afterAll(() => Promise.all(databases.map((db) => db.dispose())))
+describe.each(databases)('generated schema on %s', (_, database) => {
+  withDatabase(database)((it) => {
+    it.effect.each(strategies)('creates the kitchen-sink schema with %s ids, twice', (idStrategy) =>
+      Effect.andThen(resetSchema(kitchenSink(idStrategy)), resetSchema(kitchenSink(idStrategy))),
+    )
 
-describe.each(databases)('generated schema on $dialect', (db) => {
-  it.each(strategies)('creates the kitchen-sink schema with %s ids, twice', async (idStrategy) => {
-    await db.resetSchema(kitchenSink(idStrategy))
-    await db.resetSchema(kitchenSink(idStrategy))
-  })
-
-  it.each(strategies)('enforces foreign keys with ON DELETE CASCADE and id defaults (%s ids)', async (idStrategy) => {
-    await db.resetSchema({ advanced: generateId(idStrategy) })
-    const { dialect } = db
-    const now = dialect === 'sqlite' ? new Date().toISOString() : new Date()
-    // Who generates the id: the app for string ids (and uuid outside PostgreSQL), the database otherwise.
-    const appId = (value: string) =>
-      idStrategy === 'string'
-        ? { id: value }
-        : idStrategy === 'uuid' && dialect !== 'pg'
-          ? { id: crypto.randomUUID() }
-          : {}
-
-    const result = await db.run(
+    it.effect.each(strategies)('enforces foreign keys with ON DELETE CASCADE and id defaults (%s ids)', (idStrategy) =>
       Effect.gen(function* () {
+        yield* resetSchema({ advanced: generateId(idStrategy) })
         const sql = yield* SqlClient.SqlClient
+        const dialect = yield* dialectOf
+        const now = toSqlValue(dialectProfiles[dialect])(new Date())
+        // Who generates the id: the app for string ids (and uuid outside PostgreSQL), the database otherwise.
+        const appId = (value: string) =>
+          idStrategy === 'string'
+            ? { id: value }
+            : idStrategy === 'uuid' && dialect !== 'pg'
+              ? { id: crypto.randomUUID() }
+              : {}
         const email = `${idStrategy}@example.com`
         yield* sql`INSERT INTO ${sql('user')} ${sql.insert({
           ...appId('user-1'),
           name: 'Alice',
           email,
-          emailVerified: dialect === 'sqlite' ? 0 : false,
+          emailVerified: toSqlValue(dialectProfiles[dialect])(false),
           createdAt: now,
           updatedAt: now,
         })}`
@@ -114,11 +120,9 @@ describe.each(databases)('generated schema on $dialect', (db) => {
         })}`
         yield* sql`DELETE FROM ${sql('user')} WHERE ${sql('id')} = ${user?.id as string}`
         const [sessions] = yield* sql<{ n: unknown }>`SELECT COUNT(*) AS ${sql('n')} FROM ${sql('session')}`
-        return { userId: user?.id, sessions: Number(sessions?.n) }
+        expect(Number(sessions?.n)).toBe(0)
+        expectIdShape[idStrategy](user?.id)
       }),
     )
-
-    expect(result.sessions).toBe(0)
-    expectIdShape[idStrategy](result.userId)
   })
 })

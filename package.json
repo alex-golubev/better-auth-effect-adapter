@@ -61,6 +61,7 @@
     "@effect/sql-pg": "4.1.4",
     "@effect/sql-sqlite-node": "4.1.4",
     "@effect/tsgo": "0.68.1",
+    "@effect/vitest": "4.1.4",
     "@testcontainers/mysql": "12.2.1",
     "@testcontainers/postgresql": "12.2.1",
     "@types/node": "26.6.6",

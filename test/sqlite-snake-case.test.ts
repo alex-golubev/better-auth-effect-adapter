@@ -3,7 +3,7 @@
 import { sqliteDatabase } from './harness'
 import { runOfficialSuites } from './suites'
 
-await runOfficialSuites(await sqliteDatabase({ snakeCase: true }), {
+await runOfficialSuites(sqliteDatabase({ snakeCase: true }), {
   // These rename `email` to `email_address` through better-auth's `fields`. With result name
   // transforms that can't work: the column comes back as `emailAddress` (snakeToCamel), not under
   // the physical name better-auth asks for. Next to driver transforms, physical names stay camelCase.

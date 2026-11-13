@@ -1,24 +1,35 @@
 import { MysqlClient } from '@effect/sql-mysql2'
 import { PgClient } from '@effect/sql-pg'
 import { SqliteClient } from '@effect/sql-sqlite-node'
+import { layer } from '@effect/vitest'
 import { MySqlContainer } from '@testcontainers/mysql'
 import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import type { BetterAuthOptions } from 'better-auth'
 import { getAuthTables } from 'better-auth/db'
-import { type Context, Effect, type Layer, ManagedRuntime, Redacted, String as Str } from 'effect'
+import { Effect, Layer, Redacted, String as Str } from 'effect'
 import { SqlClient } from 'effect/sql'
-import type { Dialect } from '../src/dialect'
+import { type Dialect, detectDialect } from '../src/dialect'
+import { EffectSqlAdapterError } from '../src/errors'
 import { clientNames, idStrategyOf, schemaStatements } from '../src/schema'
 
-/** A database the integration tests run against, plus schema management. */
-export interface TestDatabase {
-  readonly dialect: Dialect
-  readonly context: Context.Context<SqlClient.SqlClient>
-  readonly run: <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) => Promise<A>
-  /** Drops every table, then creates the schema for `options` with our DDL generator. */
-  readonly resetSchema: (options: BetterAuthOptions) => Promise<void>
-  readonly dispose: () => Promise<void>
-}
+/** A database the integration tests run against: its SqlClient, released with the layer. */
+export type Database = Layer.Layer<SqlClient.SqlClient, unknown>
+
+/**
+ * Shares `database` between the tests of a block (`@effect/vitest`'s `layer`). The tests
+ * keep the live clock: their timeouts must really fire, and the drivers keep real time.
+ */
+export const withDatabase = <R, E>(database: Layer.Layer<R, E>) => layer(database, { excludeTestServices: true })
+
+/** The dialect of the SqlClient in context. */
+export const dialectOf: Effect.Effect<Dialect, EffectSqlAdapterError, SqlClient.SqlClient> = Effect.flatMap(
+  SqlClient.SqlClient,
+  (sql) =>
+    Effect.mapError(
+      Effect.fromOption(detectDialect(sql)),
+      () => new EffectSqlAdapterError({ message: `Unsupported driver "${sql.driver}"` }),
+    ),
+)
 
 const dropTables = (sql: SqlClient.SqlClient, tables: ReadonlyArray<{ readonly name: string }>) =>
   Effect.forEach(tables, ({ name }) => sql`DROP TABLE ${sql(name)}`, { discard: true })
@@ -54,37 +65,26 @@ const dropAllTables: Record<Dialect, Effect.Effect<void, unknown, SqlClient.SqlC
   }),
 }
 
-const fromLayer = async (
-  dialect: Dialect,
-  layer: Layer.Layer<SqlClient.SqlClient, unknown>,
-  stop: () => Promise<unknown> = async () => {},
-): Promise<TestDatabase> => {
-  const runtime = ManagedRuntime.make(layer)
-  const context = await runtime.context()
-  const run = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) => runtime.runPromise(effect)
-  return {
-    dialect,
-    context,
-    run,
-    resetSchema: (options) =>
-      run(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient.SqlClient
-          const statements = yield* schemaStatements(getAuthTables(options), {
-            dialect,
-            idStrategy: idStrategyOf(options),
-            rename: clientNames(sql, dialect),
-          })
-          yield* dropAllTables[dialect]
-          yield* Effect.forEach(statements, (statement) => sql.unsafe(statement), { discard: true })
-        }),
-      ),
-    dispose: async () => {
-      await runtime.dispose()
-      await stop()
-    },
-  }
-}
+/**
+ * Drops every table, then creates the schema for `options` with our DDL generator,
+ * naming tables and columns as the client does (`transformQueryNames`).
+ */
+export const resetSchema = (options: BetterAuthOptions): Effect.Effect<void, unknown, SqlClient.SqlClient> =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    const dialect = yield* dialectOf
+    const statements = yield* schemaStatements(getAuthTables(options), {
+      dialect,
+      idStrategy: idStrategyOf(options),
+      rename: clientNames(sql, dialect),
+    })
+    yield* dropAllTables[dialect]
+    yield* Effect.forEach(statements, (statement) => sql.unsafe(statement), { discard: true })
+  })
+
+/** A started testcontainers container, stopped when the scope (the layer using it) closes. */
+const container = <C extends { readonly stop: () => Promise<unknown> }>(start: () => Promise<C>) =>
+  Effect.acquireRelease(Effect.promise(start), (started) => Effect.promise(() => started.stop()))
 
 export interface SqliteOptions {
   /** snake_case columns through the client's `transformQueryNames` / `transformResultNames`. */
@@ -94,8 +94,8 @@ export interface SqliteOptions {
 const snakeCaseNames = (snakeCase: boolean) =>
   snakeCase ? { transformQueryNames: Str.camelToSnake, transformResultNames: Str.snakeToCamel } : {}
 
-export const sqliteDatabase = ({ snakeCase = false }: SqliteOptions = {}): Promise<TestDatabase> =>
-  fromLayer('sqlite', SqliteClient.layer({ filename: ':memory:', ...snakeCaseNames(snakeCase) }))
+export const sqliteDatabase = ({ snakeCase = false }: SqliteOptions = {}): Database =>
+  SqliteClient.layer({ filename: ':memory:', ...snakeCaseNames(snakeCase) })
 
 export interface DatabaseOptions {
   readonly maxConnections?: number
@@ -114,18 +114,18 @@ export interface DatabaseOptions {
 const maxConnectionsOption = (maxConnections: number | undefined) =>
   maxConnections === undefined ? {} : { maxConnections }
 
-export const postgresDatabase = async ({
-  maxConnections,
-  preparedStatements = true,
-}: DatabaseOptions = {}): Promise<TestDatabase> => {
-  const container = await new PostgreSqlContainer('postgres:17-alpine').start()
-  const layer = PgClient.layer({
-    url: Redacted.make(container.getConnectionUri()),
-    prepare: preparedStatements,
-    ...maxConnectionsOption(maxConnections),
-  })
-  return fromLayer('pg', layer, () => container.stop())
-}
+export const postgresDatabase = ({ maxConnections, preparedStatements = true }: DatabaseOptions = {}): Database =>
+  Layer.unwrap(
+    Effect.map(
+      container(() => new PostgreSqlContainer('postgres:17-alpine').start()),
+      (started) =>
+        PgClient.layer({
+          url: Redacted.make(started.getConnectionUri()),
+          prepare: preparedStatements,
+          ...maxConnectionsOption(maxConnections),
+        }),
+    ),
+  )
 
 /**
  * mysql2 reads and writes `Date` values in the process's local time zone unless told
@@ -134,15 +134,15 @@ export const postgresDatabase = async ({
  */
 const utcMysqlUrl = (uri: string): string => `${uri}${new URL(uri).search === '' ? '?' : '&'}timezone=Z`
 
-export const mysqlDatabase = async ({
-  maxConnections,
-  preparedStatements = true,
-}: DatabaseOptions = {}): Promise<TestDatabase> => {
-  const container = await new MySqlContainer('mysql:8.4').start()
-  const layer = MysqlClient.layer({
-    url: Redacted.make(utcMysqlUrl(container.getConnectionUri())),
-    disablePreparedStatements: !preparedStatements,
-    ...maxConnectionsOption(maxConnections),
-  })
-  return fromLayer('mysql', layer, () => container.stop())
-}
+export const mysqlDatabase = ({ maxConnections, preparedStatements = true }: DatabaseOptions = {}): Database =>
+  Layer.unwrap(
+    Effect.map(
+      container(() => new MySqlContainer('mysql:8.4').start()),
+      (started) =>
+        MysqlClient.layer({
+          url: Redacted.make(utcMysqlUrl(started.getConnectionUri())),
+          disablePreparedStatements: !preparedStatements,
+          ...maxConnectionsOption(maxConnections),
+        }),
+    ),
+  )

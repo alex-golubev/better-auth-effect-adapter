@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-pnpm build              # tsdown, ESM only → dist/index.mjs + index.d.mts
+pnpm build              # tsdown, ESM only → dist/index.mjs + index.d.mts (declarations from tsconfig.build.json: src only)
 pnpm typecheck          # tsc (TypeScript 7, patched by @effect/tsgo for Effect diagnostics)
 pnpm check              # Biome lint + format check (pnpm check:fix to apply)
 pnpm test               # vitest project "unit"        (src/**/*.test.ts)
@@ -26,7 +26,14 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - `sqlite.test.ts`, `postgres.test.ts`, `mysql.test.ts` run every official `@better-auth/test-utils` suite through `runOfficialSuites` (`test/suites.ts`).
   - `sqlite-snake-case.test.ts` runs them again with the client's name transforms (`camelToSnake` / `snakeToCamel`).
   - `schema.test.ts` checks the generated DDL, `issue-4.test.ts` the app-transaction bridge on all three databases, and `pool.test.ts` that auth shares the app's PostgreSQL pool.
-  - Databases are opened with top-level `await` (concurrently via `Promise.all`) and disposed in `afterAll`, which avoids `let` + `beforeAll`.
+- Tests are written with `@effect/vitest`.
+  - Test bodies are effects: `it.effect(name, () => Effect.gen(...))`.
+  - Shared services come from `layer(...)` blocks. In `src/`, use `buildPerTest: true` when each test needs a fresh SQLite.
+  - In `test/`, databases are layers (`sqliteDatabase()`, `postgresDatabase()`, `mysqlDatabase()`: a `Layer<SqlClient>` whose testcontainer stops with the layer). Share them through `withDatabase(layer)`, which is `layer(...)` with `excludeTestServices: true`. Integration tests need the live clock: `TestClock` would freeze the issue #4 deadlock guard (`Effect.timeout`) and the drivers' timers.
+  - `test/auth.ts` holds the `Auth` service the integration tests build better-auth with, from `make()`.
+  - Each test starts with `yield* resetSchema(options)`. `@effect/vitest`'s `beforeEach` can't require services.
+  - Better-auth calls go through `run` / `bind` (inside transactions) or `Effect.promise` (outside them).
+  - The official suites are the exception: `@better-auth/test-utils` drives Vitest through a Promise API, so `runOfficialSuites` runs the database layer on a `ManagedRuntime`.
 
 ## Code style
 
@@ -63,12 +70,12 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - There is no `RETURNING` (`returning.mysql` in `src/operations.ts`). Inserts read the row back by id: the one better-auth generated, else `insertId`. `update`, `consumeOne` and `incrementOne` lock the matching rows with `SELECT … FOR UPDATE` inside `sql.withTransaction`, then write and read back by id. MySQL can't `LIMIT` an `IN` subquery.
   - Default collations ignore case, so `sensitive` string comparisons bind the value with `COLLATE utf8mb4_bin` (`src/where.ts`). `=` and `IN` keep the plain comparison too, so the lookup stays an exact index lookup. This works on any schema, including `_ci` columns.
   - mysql2 reads and writes `Date` in the process's local time zone by default. Apps need `timezone: 'Z'`; with a `url`, `MysqlClient` ignores `poolConfig`, so it goes into the URL (`?timezone=Z`). The adapter can't fix this, since the driver parses dates.
-- `effect/sql` and the `@effect/sql-*` drivers are marked `@stability unstable`, so they may break between minor versions. They are allow-listed in `tsconfig.json` (`allowedUnstableApis`).
+- `effect/sql`, the `@effect/sql-*` drivers and `@effect/vitest` are marked `@stability unstable`, so they may break between minor versions. They are allow-listed in `tsconfig.json` (`allowedUnstableApis`).
 - Both `@effect/sql-pg` and `@effect/sql-mysql2` use server-side prepared statements by default, cached per connection by SQL text. A cached statement outlives a table recreated with different column types on a live pool.
   - PostgreSQL fails loudly: `operator does not exist: uuid = text`.
   - MySQL 8.4 fails intermittently, depending on which pooled connection still holds the old statement. Inserts fail with "Data too long", updates with "Truncated incorrect DOUBLE value", and reads silently match nothing.
   - The harness option `preparedStatements: false` (PG `prepare: false`, MySQL `disablePreparedStatements: true`) is used by the tests that recreate tables with different id types: the official suites and `schema.test.ts`. The others keep the drivers' default.
-- The DDL generator (`src/schema.ts`) is also what integration tests use to build schemas. `test/harness.ts` → `resetSchema(options)` drops all tables and recreates them.
+- The DDL generator (`src/schema.ts`) is also what integration tests use to build schemas. In `test/harness.ts`, the effect `resetSchema(options)` drops all tables and recreates them.
   - `SchemaConfig.rename` maps better-auth's names to physical ones before index names are computed. `createSchema` and the harness pass `clientNames(sql, dialect)`, the client's own rendering of an identifier, so the DDL follows `transformQueryNames` exactly as queries do.
 - Driver name transforms (`transformQueryNames` / `transformResultNames`) work with the adapter, with three caveats:
   - better-auth's own `fields` names must stay round-trip safe (camelCase), since results come back through `transformResultNames`;

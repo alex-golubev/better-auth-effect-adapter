@@ -18,7 +18,13 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "allowedUnstableApis": ["effect/sql", "@effect/sql-pg", "@effect/sql-mysql2", "@effect/sql-sqlite-node"]
+        "allowedUnstableApis": [
+          "effect/sql",
+          "@effect/sql-pg",
+          "@effect/sql-mysql2",
+          "@effect/sql-sqlite-node",
+          "@effect/vitest"
+        ]
       }
     ]
   },

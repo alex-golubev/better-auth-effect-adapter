@@ -4,20 +4,12 @@
  * auth calls (whose transactions reserve that connection) must neither deadlock nor make
  * PostgreSQL see a second client connection.
  */
-import { type BetterAuthOptions, betterAuth } from 'better-auth'
-import { Array as Arr, Effect } from 'effect'
+import { expect } from '@effect/vitest'
+import { Array as Arr, Effect, Layer } from 'effect'
 import { SqlClient } from 'effect/sql'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { fromContext, run } from '../src/adapter'
-import { postgresDatabase } from './harness'
-
-const options = {
-  baseURL: 'http://localhost:3000',
-  secret: 'shared-pool-secret-that-is-long-enough-for-better-auth',
-  emailAndPassword: { enabled: true },
-  logger: { disabled: true },
-  telemetry: { enabled: false },
-} satisfies BetterAuthOptions
+import { bind } from '../src/adapter'
+import { Auth, authOptions, signUpBody } from './auth'
+import { postgresDatabase, resetSchema, withDatabase } from './harness'
 
 const appQuery = Effect.flatMap(SqlClient.SqlClient, (sql) => sql`SELECT pg_sleep(0.02)`)
 
@@ -31,34 +23,23 @@ const clientConnections = Effect.flatMap(SqlClient.SqlClient, (sql) =>
   ),
 )
 
-const db = await postgresDatabase({ maxConnections: 1 })
-
-afterAll(() => db.dispose())
-
-describe('one pool for the app and auth (PostgreSQL)', () => {
-  beforeAll(() => db.resetSchema(options))
-
-  it('runs concurrent app and auth work on the app pool alone', async () => {
-    const auth = betterAuth({ ...options, database: fromContext(db.context) })
-    const signUp = (n: number) =>
-      run(() =>
-        auth.api.signUpEmail({ body: { email: `pool-${n}@example.com`, password: 'password1234', name: 'Pool' } }),
-      )
-    const connections = await db.run(
-      Effect.timeout(
-        Effect.andThen(
-          Effect.all(
-            [
-              Effect.forEach(Arr.range(1, 10), () => appQuery, { concurrency: 'unbounded' }),
-              Effect.forEach(Arr.range(1, 10), signUp, { concurrency: 'unbounded' }),
-            ],
-            { concurrency: 'unbounded' },
-          ),
-          clientConnections,
-        ),
-        '20 seconds',
-      ),
+withDatabase(Layer.provideMerge(Auth.layer, postgresDatabase({ maxConnections: 1 })))(
+  'one pool for the app and auth (PostgreSQL)',
+  (it) => {
+    it.effect('runs concurrent app and auth work on the app pool alone', () =>
+      Effect.gen(function* () {
+        yield* resetSchema(authOptions)
+        const auth = bind(yield* Auth)
+        const signUp = (n: number) => auth.use((api) => api.signUpEmail({ body: signUpBody(`pool-${n}@example.com`) }))
+        yield* Effect.all(
+          [
+            Effect.forEach(Arr.range(1, 10), () => appQuery, { concurrency: 'unbounded' }),
+            Effect.forEach(Arr.range(1, 10), signUp, { concurrency: 'unbounded' }),
+          ],
+          { concurrency: 'unbounded' },
+        ).pipe(Effect.timeout('20 seconds'))
+        expect(yield* clientConnections).toBe(1)
+      }),
     )
-    expect(connections).toBe(1)
-  })
-})
+  },
+)

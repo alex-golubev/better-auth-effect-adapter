@@ -29,6 +29,9 @@ importers:
       '@effect/tsgo':
         specifier: 0.68.1
         version: 0.68.1
+      '@effect/vitest':
+        specifier: 4.1.4
+        version: 4.1.4(effect@4.1.4)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(yaml@2.9.1)))
       '@testcontainers/mysql':
         specifier: 12.2.1
         version: 12.2.1(bare-buffer@3.7.1)
@@ -264,6 +267,12 @@ packages:
   '@effect/tsgo@0.68.1':
     resolution: {integrity: sha512-/5zgc4EzB3ca9w8M09C8hNZcKChWVw29lIiBGfeLAz+TYFUETp2XqOSdT+GZIJlQlr0roFpQsdvJCq0RUPvNog==}
     hasBin: true
+
+  '@effect/vitest@4.1.4':
+    resolution: {integrity: sha512-AKpZ6zKihCRhY7hDbiQ2yp/krw+afIkxDRjFMwwzMiyhd0iYk0WaHa9J6GGC7TUF/C7HP2dZyMVq5xC0Qm/2/g==}
+    peerDependencies:
+      effect: ^4.1.4
+      vitest: '>=5.0.0 <6.0.0'
 
   '@emnapi/core@2.0.0-beta.2':
     resolution: {integrity: sha512-MzCVoWtcg4Pm2B3je5mMvYMvj3MmBKw+fU7vbsJc9/iT8ip6/eYIHo/Dsm/mr+wsHB6SEyJDuxB09Yy6r/8+4A==}
@@ -1911,6 +1920,11 @@ snapshots:
       '@effect/tsgo-linux-x64': 0.68.1
       '@effect/tsgo-win32-arm64': 0.68.1
       '@effect/tsgo-win32-x64': 0.68.1
+
+  '@effect/vitest@4.1.4(effect@4.1.4)(vitest@5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(yaml@2.9.1)))':
+    dependencies:
+      effect: 4.1.4
+      vitest: 5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(yaml@2.9.1))
 
   '@emnapi/core@2.0.0-beta.2':
     dependencies:
