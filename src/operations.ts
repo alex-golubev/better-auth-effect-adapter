@@ -85,22 +85,42 @@ const executeRaw = (sql: SqlClient.SqlClient, statement: Statement.Statement<Row
     ([query, params]) => sql.unsafe(query, params).raw,
   )
 
-/** Drivers of one dialect report it under different keys (node:sqlite `changes`, libsql `rowsAffected`, …). */
-const affectedRowsKeys = ['changes', 'rowCount', 'affectedRows', 'rowsAffected'] as const
-
+/** mysql2's result header for a write. */
 export const affectedRows = (raw: unknown): Effect.Effect<number, EffectSqlAdapterError> =>
   pipe(
-    Array.findFirst(affectedRowsKeys, (key) =>
-      pipe(
-        Option.liftPredicate(raw, Predicate.hasProperty(key)),
-        Option.map((result) => result[key]),
-        Option.filter((count) => Predicate.isNumber(count) || Predicate.isBigInt(count)),
-      ),
-    ),
+    Option.liftPredicate(raw, Predicate.hasProperty('affectedRows')),
+    Option.map((result) => result.affectedRows),
+    Option.filter((count) => Predicate.isNumber(count) || Predicate.isBigInt(count)),
     Option.map(Number),
     Effect.fromOption,
-    Effect.mapError(() => adapterError('The driver did not report affected rows')),
+    Effect.mapError(() => adapterError('The mysql driver did not report affected rows')),
   )
+
+interface Total {
+  readonly total: unknown
+}
+
+const totalOf = (rows: ReadonlyArray<Total>): number =>
+  pipe(
+    Array.head(rows),
+    Option.map((row) => Number(row.total)),
+    Option.getOrElse(() => 0),
+  )
+
+/**
+ * Counted in SQL, which every driver of a dialect runs alike: their raw results differ, and
+ * `@effect/sql-sqlite-bun`'s has no count at all. MySQL has no RETURNING; mysql2 is its only driver.
+ */
+const writtenRows: Record<Dialect, (sql: SqlClient.SqlClient, write: Statement.Statement<Row>) => Operation<number>> = {
+  sqlite: (sql, write) => Effect.map(sql`${write} RETURNING 1`, (rows) => rows.length),
+  // One row back, however many were written.
+  pg: (sql, write) =>
+    Effect.map(
+      sql<Total>`WITH ${sql('written')} AS (${write} RETURNING 1) SELECT COUNT(*) AS ${sql('total')} FROM ${sql('written')}`,
+      totalOf,
+    ),
+  mysql: (sql, write) => Effect.flatMap(executeRaw(sql, write), affectedRows),
+}
 
 export const firstOrNull = (rows: ReadonlyArray<Row>): Row | null => Option.getOrNull(Array.head(rows))
 
@@ -282,14 +302,12 @@ export const update = (
 
 export const updateMany = (
   sql: SqlClient.SqlClient,
+  dialect: Dialect,
   table: string,
   where: Option.Option<Fragment>,
   data: Row,
 ): Operation<number> =>
-  Effect.flatMap(
-    executeRaw(sql, sql<Row>`UPDATE ${sql(table)} SET ${sql.update(data)} ${whereSql(sql, where)}`),
-    affectedRows,
-  )
+  writtenRows[dialect](sql, sql<Row>`UPDATE ${sql(table)} SET ${sql.update(data)} ${whereSql(sql, where)}`)
 
 /** Without a condition, deletes nothing: `delete` targets one record. `deleteMany` may clear a table. */
 export const remove = (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>): Operation<void> =>
@@ -300,21 +318,13 @@ export const remove = (sql: SqlClient.SqlClient, table: string, where: Option.Op
 
 export const removeMany = (
   sql: SqlClient.SqlClient,
+  dialect: Dialect,
   table: string,
   where: Option.Option<Fragment>,
-): Operation<number> =>
-  Effect.flatMap(executeRaw(sql, sql<Row>`DELETE FROM ${sql(table)} ${whereSql(sql, where)}`), affectedRows)
+): Operation<number> => writtenRows[dialect](sql, sql<Row>`DELETE FROM ${sql(table)} ${whereSql(sql, where)}`)
 
 export const count = (sql: SqlClient.SqlClient, table: string, where: Option.Option<Fragment>): Operation<number> =>
-  Effect.map(
-    sql<{ total: unknown }>`SELECT COUNT(*) AS ${sql('total')} FROM ${sql(table)} ${whereSql(sql, where)}`,
-    (rows) =>
-      pipe(
-        Array.head(rows),
-        Option.map((row) => Number(row.total)),
-        Option.getOrElse(() => 0),
-      ),
-  )
+  Effect.map(sql<Total>`SELECT COUNT(*) AS ${sql('total')} FROM ${sql(table)} ${whereSql(sql, where)}`, totalOf)
 
 export const consumeOne = (
   sql: SqlClient.SqlClient,

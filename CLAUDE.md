@@ -15,7 +15,7 @@ pnpm check              # Biome lint + format check (pnpm check:fix to apply)
 pnpm test               # vitest project "unit"        (src/**/*.test.ts)
 pnpm test:integration   # vitest project "integration" (test/**/*.test.ts; PG/MySQL need Docker)
 pnpm test:all           # both
-pnpm test:bun           # smoke test under Bun (test/bun-smoke.ts, needs bun)
+pnpm test:bun           # smoke test under Bun (test/bun-smoke.ts, needs bun; or `pnpm dlx bun@1 test/bun-smoke.ts`)
 ```
 
 To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run test/sqlite.test.ts`.
@@ -26,8 +26,8 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 - `test/` holds integration tests. They run against SQLite (in-memory), plus PostgreSQL and MySQL via testcontainers (`test/harness.ts`).
   - `sqlite.test.ts`, `postgres.test.ts`, `mysql.test.ts` run every official `@better-auth/test-utils` suite through `runOfficialSuites` (`test/suites.ts`).
   - `sqlite-snake-case.test.ts` runs them again with the client's name transforms (`camelToSnake` / `snakeToCamel`).
-  - `bun-smoke.ts` (not a Vitest file) checks the transaction bridge and `AuthCallError` under Bun with `@effect/sql-sqlite-bun`. It imports from `src/`, not the harness, whose Node drivers Bun may not load.
-  - `schema.test.ts` checks the generated DDL, `issue-4.test.ts` the app-transaction bridge on all three databases, `operations.test.ts` the guards of `incrementOne`/`consumeOne` under concurrent writes and bigint results, and `pool.test.ts` that auth shares the app's PostgreSQL pool.
+  - `bun-smoke.ts` (not a Vitest file) calls every adapter method once and checks the transaction bridge and `AuthCallError` under Bun with `@effect/sql-sqlite-bun`. It imports from `src/`, not the harness, whose Node drivers Bun may not load.
+  - `schema.test.ts` checks the generated DDL, `issue-4.test.ts` the app-transaction bridge on all three databases, `operations.test.ts` the guards of `incrementOne`/`consumeOne` under concurrent writes and bigint results, `pool.test.ts` that auth shares the app's PostgreSQL pool, `values.test.ts` binary columns and trailing spaces, and `qualified-names.test.ts` model names such as `auth.user` (MySQL connects as root, via the harness option `root`, to create a database).
 - Tests are written with `@effect/vitest`.
   - Test bodies are effects: `it.effect(name, () => Effect.gen(...))`.
   - Shared services come from `layer(...)` blocks. In `src/`, use `buildPerTest: true` when each test needs a fresh SQLite.
@@ -103,13 +103,13 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
 - MySQL:
   - `LIMIT` and `OFFSET` go through `sql.literal`; mysql2 can't bind them. On the other dialects they stay parameters, so each page doesn't become a new prepared statement.
   - There is no `RETURNING` (`returning.mysql` in `src/operations.ts`). Inserts read the row back by id: the one better-auth generated, else `insertId`. The latter runs in a transaction, so an unreadable id rolls the insert back. `update`, `consumeOne` and `incrementOne` lock the matching rows with `SELECT … FOR UPDATE` inside `sql.withTransaction`, then write and read back by id. MySQL can't `LIMIT` an `IN` subquery.
-  - Default collations ignore case, so `sensitive` string comparisons bind the value with `COLLATE utf8mb4_bin` (`src/where.ts`). `=` and `IN` keep the plain comparison too, so the lookup stays an exact index lookup. This works on any schema, including `_ci` columns.
+  - Default collations ignore case, so `sensitive` string comparisons bind the value with `COLLATE utf8mb4_0900_bin` (`src/where.ts`). It is NO PAD; `utf8mb4_bin` pads, so `'abc'` would equal `'abc '`. `=` and `IN` keep the plain comparison too, so the lookup stays an exact index lookup. This works on any schema, including `_ci` columns.
   - mysql2 reads and writes `Date` in the process's local time zone by default. Apps need `timezone: 'Z'`; with a `url`, `MysqlClient` ignores `poolConfig`, so it goes into the URL (`?timezone=Z`). The adapter can't fix this, since the driver parses dates.
 - `effect/sql`, the `@effect/sql-*` drivers and `@effect/vitest` are marked `@stability unstable`, so they may break between minor versions. They are allow-listed in `tsconfig.json` (`allowedUnstableApis`).
 - Both `@effect/sql-pg` and `@effect/sql-mysql2` use server-side prepared statements by default, cached per connection by SQL text. A cached statement outlives a table recreated with different column types on a live pool.
   - PostgreSQL fails loudly: `operator does not exist: uuid = text`.
   - MySQL 8.4 fails intermittently, depending on which pooled connection still holds the old statement. Inserts fail with "Data too long", updates with "Truncated incorrect DOUBLE value", and reads silently match nothing.
-  - The harness option `preparedStatements: false` (PG `prepare: false`, MySQL `disablePreparedStatements: true`) is used by the tests that recreate tables with different id types: the official suites and `schema.test.ts`. The others keep the drivers' default.
+  - The harness option `preparedStatements: false` (PG `prepare: false`, MySQL `disablePreparedStatements: true`) is used by the tests that recreate tables with different column types: the official suites, `schema.test.ts` and `values.test.ts`. The others keep the drivers' default.
 - The DDL generator (`src/schema.ts`) is also what integration tests use to build schemas. In `test/harness.ts`, the effect `resetSchema(options)` drops all tables and recreates them.
   - `SchemaConfig.rename` maps better-auth's names to physical ones before index names are computed. `createSchema` and the harness pass `clientNames(sql, dialect)`, the client's own rendering of an identifier, so the DDL follows `transformQueryNames` exactly as queries do.
 - Driver name transforms (`transformQueryNames` / `transformResultNames`) work with the adapter, with three caveats:
@@ -118,9 +118,12 @@ To run a single file: `pnpm vitest run src/where.test.ts` or `pnpm vitest run te
   - MySQL has no such option.
 - `README.md` documents user-facing behavior and `CHANGELOG.md` the 0.4 → 1.0 migration. Keep both in sync with behavior changes.
 - SQLite (`node:sqlite`): `Date` and plain objects can't be bound as parameters.
+- effect 4's `Equal` (and `Array.contains`, `dedupe`, …) compares structurally and throws on the prototype of a Buffer or Uint8Array. Compare values from rows by reference.
+- Read records keyed by data (or by user-supplied names) with `Record.get`, which checks own keys: `byKey['constructor']` is `Object`.
+- Every client escapes identifiers with `Statement.defaultEscape`, which reads a dot as a qualifier: `sql('auth.user')` is `"auth"."user"`. The DDL quotes with the same function, and `clientNames` parses the compiled path back. Generated index names use the bare table name. SQLite takes the schema on the index name (`CREATE INDEX "auth"."i" ON "user"`) and only a bare name in `REFERENCES`, and rejects `"auth"."t".*`, so the join subquery selects through an alias.
 - PostgreSQL re-checks only a statement's outer conditions on a row that a concurrent write changed, not a subquery's. `firstMatch` (`consumeOne` / `incrementOne`) therefore repeats the condition outside its `id IN (SELECT … LIMIT 1)`.
 - `@effect/sql-pg` returns int8 as a JS BigInt. The adapter turns BigInts in result rows into numbers (`withNumbers` in `src/adapter.ts`).
-- Drivers of one dialect report affected rows under different keys (`changes`, `rowCount`, `affectedRows`, `rowsAffected`). `affectedRows` accepts any of them.
+- Drivers of one dialect shape raw results differently, and `@effect/sql-sqlite-bun`'s `.raw` returns rows with no count. So `updateMany`/`deleteMany` count in SQL (`writtenRows` in `src/operations.ts`): `RETURNING 1` on SQLite, a CTE with `COUNT(*)` on PostgreSQL, mysql2's `affectedRows` on MySQL.
 - `incrementOne` compiles to `COALESCE(col, 0) + n`. better-auth's own fallback treats a NULL counter as 0, and two-factor relies on that.
 - `make()` drops `sql.transactionService` and `Tracer.ParentSpan` from the context it keeps. A transaction or span open around it has ended by the time queries run.
 - `in`/`not_in` give null list elements their own `IS [NOT] NULL` clause. SQL's `NOT IN (…, NULL)` matches nothing.

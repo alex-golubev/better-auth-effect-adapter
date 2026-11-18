@@ -115,19 +115,19 @@ layer(Sqlite)('whereCondition: SQL', (it) => {
   it.effect('compares strings exactly on MySQL with a binary collation, keeping the indexable comparison', () =>
     Effect.gen(function* () {
       expect(yield* compile('mysql', [where('a', 'eq', 'X')])).toEqual([
-        'SELECT * FROM "t" WHERE ("a" = ? AND "a" = (? COLLATE utf8mb4_bin))',
+        'SELECT * FROM "t" WHERE ("a" = ? AND "a" = (? COLLATE utf8mb4_0900_bin))',
         ['X', 'X'],
       ])
       expect(yield* compile('mysql', [where('a', 'in', ['X', 'y'])])).toEqual([
-        'SELECT * FROM "t" WHERE ("a" IN (?,?) AND "a" IN ((? COLLATE utf8mb4_bin), (? COLLATE utf8mb4_bin)))',
+        'SELECT * FROM "t" WHERE ("a" IN (?,?) AND "a" IN ((? COLLATE utf8mb4_0900_bin), (? COLLATE utf8mb4_0900_bin)))',
         ['X', 'y', 'X', 'y'],
       ])
       expect(yield* compile('mysql', [where('a', 'ne', 'X'), where('b', 'not_in', ['X'])])).toEqual([
-        'SELECT * FROM "t" WHERE ("a" <> (? COLLATE utf8mb4_bin) AND "b" NOT IN ((? COLLATE utf8mb4_bin)))',
+        'SELECT * FROM "t" WHERE ("a" <> (? COLLATE utf8mb4_0900_bin) AND "b" NOT IN ((? COLLATE utf8mb4_0900_bin)))',
         ['X', 'X'],
       ])
       expect(yield* compile('mysql', [where('a', 'starts_with', 'Ab')])).toEqual([
-        `SELECT * FROM "t" WHERE "a" LIKE (? COLLATE utf8mb4_bin) ESCAPE '!'`,
+        `SELECT * FROM "t" WHERE "a" LIKE (? COLLATE utf8mb4_0900_bin) ESCAPE '!'`,
         ['Ab%'],
       ])
     }),
@@ -147,6 +147,16 @@ layer(Sqlite)('whereCondition: SQL', (it) => {
       expect(yield* compile('pg', [where('a', 'eq', 5, { mode: 'insensitive' })])).toEqual([
         'SELECT * FROM "t" WHERE "a" = ?',
         [5],
+      ])
+    }),
+  )
+
+  it.effect('keeps insensitive mode for a list holding null', () =>
+    Effect.gen(function* () {
+      const value = ['X', null] as unknown as CleanedWhere['value']
+      expect(yield* compile('pg', [where('a', 'in', value, { mode: 'insensitive' })])).toEqual([
+        'SELECT * FROM "t" WHERE (LOWER("a") IN (LOWER(?)) OR "a" IS NULL)',
+        ['X'],
       ])
     }),
   )
@@ -239,6 +249,9 @@ layer(Sqlite, { buildPerTest: true })('whereCondition: behavior on SQLite', (it)
       const withNull = ['a', null] as unknown as CleanedWhere['value']
       expect(yield* names([where('name', 'in', withNull)])).toEqual(['a', null])
       expect(yield* names([where('name', 'not_in', withNull)])).toEqual(['b'])
+      const upperWithNull = ['A', null] as unknown as CleanedWhere['value']
+      expect(yield* names([where('name', 'in', upperWithNull, { mode: 'insensitive' })])).toEqual(['a', null])
+      expect(yield* names([where('name', 'not_in', upperWithNull, { mode: 'insensitive' })])).toEqual(['b'])
     }),
   )
 

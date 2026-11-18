@@ -17,20 +17,29 @@ const keyOf = (value: unknown): string => String(value)
 /** Lowercase without underscores: the client's name transforms leave it as is, so it can be dropped. */
 const RANK = 'joinrank'
 
-/** The limit applies per parent, in SQL: a parent with many children doesn't load them all. */
+/** SQLite rejects `"auth"."session".*`; MySQL rejects a bare `*` next to another column. */
+const ALIAS = 'joined'
+
+/**
+ * The limit applies per parent, in SQL: a parent with many children doesn't load them all. A one-to-one
+ * join targets a unique column, so it needs none, although the factory passes `limit: 1` for it.
+ */
+const perParentLimit = (join: Join): Option.Option<number> =>
+  join.relation === 'one-to-one' ? Option.none() : Option.fromUndefinedOr(join.limit)
+
 const joinedRows = (
   sql: SqlClient.SqlClient,
   table: string,
   join: Join,
   keys: Array.NonEmptyReadonlyArray<unknown>,
 ): Effect.Effect<ReadonlyArray<Row>, SqlError.SqlError> =>
-  Option.match(Option.fromUndefinedOr(join.limit), {
+  Option.match(perParentLimit(join), {
     onNone: () => sql<Row>`SELECT * FROM ${sql(table)} WHERE ${sql.in(join.on.to, keys)}`,
     onSome: (limit) =>
       Effect.map(
         sql<Row>`SELECT * FROM (
-          SELECT ${sql(table)}.*, ROW_NUMBER() OVER (PARTITION BY ${sql(join.on.to)}) AS ${sql(RANK)}
-          FROM ${sql(table)} WHERE ${sql.in(join.on.to, keys)}
+          SELECT ${sql(ALIAS)}.*, ROW_NUMBER() OVER (PARTITION BY ${sql(join.on.to)}) AS ${sql(RANK)}
+          FROM ${sql(table)} ${sql(ALIAS)} WHERE ${sql.in(join.on.to, keys)}
         ) ${sql('ranked')} WHERE ${sql(RANK)} <= ${limit}`,
         Array.map((row) => Record.remove(row, RANK)),
       ),
@@ -53,8 +62,9 @@ const fetchJoined = (
     Effect.map((rows) => ({ table, join, byKey: Array.groupBy(rows, (row) => keyOf(row[join.on.to])) })),
   )
 
+/** `Record.get` reads own keys only: a key such as `constructor` would otherwise find `Object`. */
 const related = ({ join, byKey }: Joined, parent: Row): Row | ReadonlyArray<Row> | null => {
-  const matches = Option.fromUndefinedOr(byKey[keyOf(parent[join.on.from])])
+  const matches = Record.get(byKey, keyOf(parent[join.on.from]))
   return join.relation === 'one-to-one'
     ? pipe(matches, Option.map(Array.headNonEmpty), Option.getOrNull)
     : Option.getOrElse(matches, (): ReadonlyArray<Row> => [])

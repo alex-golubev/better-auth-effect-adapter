@@ -142,6 +142,24 @@ layer(SqliteClient.layer({ filename: ':memory:', transformQueryNames: String.cam
         expect(created?.code).toContain('FOREIGN KEY ("user_id") REFERENCES "user" ("id")')
       }),
     )
+
+    it.effect('keeps schema-qualified and quoted names as the client renders them', () =>
+      Effect.gen(function* () {
+        const options: BetterAuthOptions = {
+          verification: { modelName: 'auth.verificationToken' },
+          rateLimit: { enabled: true, storage: 'database', modelName: 'we"irdLimit' },
+        }
+        const adapter = yield* adapterFor(options)
+        const created = yield* Effect.promise(
+          () => adapter.createSchema?.(options, undefined) ?? Promise.resolve(undefined),
+        )
+        expect(created?.code).toContain('CREATE TABLE "auth"."verification_token" (')
+        expect(created?.code).toContain(
+          'CREATE INDEX "auth"."verification_token_identifier_idx" ON "verification_token" ("identifier")',
+        )
+        expect(created?.code).toContain('CREATE TABLE "we""ird_limit" (')
+      }),
+    )
   },
 )
 

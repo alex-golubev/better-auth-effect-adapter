@@ -343,7 +343,47 @@ describe('schemaStatements', () => {
         )
       expect(yield* errorFor(['missing'])).toBeInstanceOf(EffectSqlAdapterError)
       expect((yield* errorFor(['missing'])).message).toMatch(/unknown field "missing"/)
+      expect((yield* errorFor(['constructor'])).message).toMatch(/unknown field "constructor"/)
       expect((yield* errorFor(['data'])).message).toMatch(/not indexable/)
+    }),
+  )
+
+  it.effect('creates an index declared twice once, as better-auth does', () =>
+    Effect.gen(function* () {
+      const statements = yield* schemaStatements(
+        {
+          item: {
+            modelName: 'item',
+            fields: { x: { type: 'string', index: true } },
+            indexes: [{ fields: ['x'] }, { fields: ['x'], name: 'ITEM_x_idx' }],
+          },
+        },
+        { dialect: 'pg', idStrategy: 'string' },
+      )
+      expect(Array.filter(statements, String.startsWith('CREATE INDEX'))).toEqual([
+        'CREATE INDEX "item_x_idx" ON "item" ("x")',
+      ])
+    }),
+  )
+
+  it.effect('fails when one index name has two definitions', () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        schemaStatements(
+          {
+            item: {
+              modelName: 'item',
+              fields: { x: { type: 'string' }, y: { type: 'string' } },
+              indexes: [
+                { fields: ['x'], name: 'by_key' },
+                { fields: ['y'], name: 'BY_KEY' },
+              ],
+            },
+          },
+          { dialect: 'pg', idStrategy: 'string' },
+        ),
+      )
+      expect(error.message).toMatch(/"by_key" identifies more than one index on table "item"/)
     }),
   )
 
@@ -358,6 +398,47 @@ describe('schemaStatements', () => {
         ),
       )
       expect(error.message).toMatch(/must start with a letter/)
+    }),
+  )
+})
+
+describe('schema-qualified model names', () => {
+  const inAuth: BetterAuthOptions = {
+    user: { modelName: 'auth.user' },
+    session: { modelName: 'auth.session' },
+    account: { modelName: 'auth.account' },
+    verification: { modelName: 'auth.verification' },
+  }
+
+  it.effect('qualify tables and foreign keys, and keep index names bare on PostgreSQL and MySQL', () =>
+    Effect.gen(function* () {
+      const pg = renderSchema(yield* ddl(inAuth, { dialect: 'pg', idStrategy: 'string' }))
+      expect(pg).toContain('CREATE TABLE "auth"."user" (')
+      expect(pg).toContain('FOREIGN KEY ("userId") REFERENCES "auth"."user" ("id") ON DELETE CASCADE')
+      expect(pg).toContain('CREATE INDEX "session_userId_idx" ON "auth"."session" ("userId")')
+      const mysql = renderSchema(yield* ddl(inAuth, { dialect: 'mysql', idStrategy: 'string' }))
+      expect(mysql).toContain('CREATE TABLE `auth`.`user` (')
+      expect(mysql).toContain('FOREIGN KEY (`userId`) REFERENCES `auth`.`user` (`id`) ON DELETE CASCADE')
+      expect(mysql).toContain('CREATE INDEX `session_userId_idx` ON `auth`.`session` (`userId`)')
+    }),
+  )
+
+  it.effect('put the schema on the index name on SQLite, and reference tables by bare name', () =>
+    Effect.gen(function* () {
+      const sqlite = renderSchema(yield* ddl(inAuth, { dialect: 'sqlite', idStrategy: 'string' }))
+      expect(sqlite).toContain('CREATE TABLE "auth"."session" (')
+      expect(sqlite).toContain('FOREIGN KEY ("userId") REFERENCES "user" ("id") ON DELETE CASCADE')
+      expect(sqlite).toContain('CREATE INDEX "auth"."session_userId_idx" ON "session" ("userId")')
+    }),
+  )
+
+  it.effect("fail on SQLite when a foreign key crosses databases, which SQLite can't express", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        ddl({ user: { modelName: 'auth.user' } }, { dialect: 'sqlite', idStrategy: 'string' }),
+      )
+      expect(error).toBeInstanceOf(EffectSqlAdapterError)
+      expect(error.message).toMatch(/can't reference "auth.user" from "session"/)
     }),
   )
 })

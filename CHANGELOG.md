@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- **Binary columns.** Reading a row that holds a binary value (`BLOB`, `bytea`, `BINARY`), for example in a column an app added to an auth table, failed with a `TypeError`.
+- **`updateMany` and `deleteMany` on Bun** failed on every call: `@effect/sql-sqlite-bun` reports no affected rows. The adapter now counts the written rows in SQL on SQLite and PostgreSQL, whatever the driver.
+- **Schema-qualified model names.** With a `modelName` such as `auth.user`, the generated schema created a table with a garbled name in the default schema instead of `user` in `auth`, and one-to-many joins on such a table failed on SQLite. Both now match the queries.
+- **Indexes declared twice** with one name and definition, for example by a plugin and by the app, are created once, as in Better Auth's own migrations. One name with two definitions fails with `EffectSqlAdapterError`.
+- **`in` and `not_in` with `mode: 'insensitive'`** compared case-sensitively when the list held a `null`.
+- **MySQL trailing spaces.** Case-sensitive comparisons bind the value with `utf8mb4_0900_bin`, which doesn't pad. Under `utf8mb4_bin`, `'abc'` equalled `'abc '`.
+- **Join keys** named like an `Object.prototype` property, such as `constructor`, found an inherited function instead of no rows.
+
+### Performance
+
+- **One-to-one joins** are a plain `IN` query. Only one-to-many joins need the per-parent `ROW_NUMBER()` subquery.
+
+### Documentation
+
+- The README examples are plain Effect code, without `await`.
+
 ## 1.0.0 (2026-11-13)
 
 A rewrite for Effect 4 and Better Auth 1.7.

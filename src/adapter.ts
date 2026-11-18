@@ -35,8 +35,14 @@ type Transaction = <R>(callback: (trx: DBTransactionAdapter) => Promise<R>) => P
 /** Used by `npx auth generate` without `--output`. */
 const DEFAULT_SCHEMA_FILE = 'better-auth-schema.sql'
 
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  Predicate.isObject(value) && Array.contains([Object.prototype, null], Object.getPrototypeOf(value))
+/**
+ * By reference: `Array.contains` compares with `Equal`, which inspects the prototype of a
+ * Buffer or Uint8Array column value structurally and throws.
+ */
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  const prototype: unknown = Predicate.isObject(value) ? Object.getPrototypeOf(value) : undefined
+  return prototype === Object.prototype || prototype === null
+}
 
 const toNumber = (value: unknown): unknown => (Predicate.isBigInt(value) ? Number(value) : value)
 
@@ -127,11 +133,12 @@ const createCustomAdapter =
         rows((sql) => Operations.update(sql, dialect, model, condition(sql, where), update as Operations.Row)),
 
       updateMany: ({ model, where, update }) =>
-        withSql((sql) => Operations.updateMany(sql, model, condition(sql, where), update)),
+        withSql((sql) => Operations.updateMany(sql, dialect, model, condition(sql, where), update)),
 
       delete: ({ model, where }) => withSql((sql) => Operations.remove(sql, model, condition(sql, where))),
 
-      deleteMany: ({ model, where }) => withSql((sql) => Operations.removeMany(sql, model, condition(sql, where))),
+      deleteMany: ({ model, where }) =>
+        withSql((sql) => Operations.removeMany(sql, dialect, model, condition(sql, where))),
 
       consumeOne: ({ model, where }) =>
         rows((sql) => Operations.consumeOne(sql, dialect, model, condition(sql, where))),

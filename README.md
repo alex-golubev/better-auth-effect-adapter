@@ -189,6 +189,7 @@ Things to know:
 
 - **Applying it.** Apply the file with your migration tool, for example the `effect/sql` migrator. `npx auth migrate` only works with Better Auth's built-in Kysely adapter.
 - **No diffs.** The output always describes the whole schema. When you add a plugin later, compare it with your database by hand.
+- **Other schemas.** A dot in `modelName` names a schema, as it does in the queries: `user: { modelName: 'auth.user' }` is the table `user` in the PostgreSQL schema `auth`, the MySQL database `auth` or the attached SQLite database `auth`. Create the schema before you apply the file. SQLite can't reference a table in another database, so on SQLite keep tables that reference each other in one database.
 
 ## Column names (snake_case)
 
@@ -243,7 +244,7 @@ Queries per call, as measured with this adapter:
 | `signUpEmail` | 4, in one transaction | 4                                 |
 
 - **`cookieCache` is the biggest saving.** `getSession` runs on every request, and with the cache enabled it reads the session from a signed cookie.
-- **Joins.** With `advanced.database.joins: true`, Better Auth asks the adapter for related rows together with the main query. The adapter loads them with one `IN` query per joined table, whatever the number of rows, and applies the per-parent limit in SQL. Reading many rows with their relations then costs one query plus one per joined table, instead of one per row. Single-row lookups such as `getSession` stay at 2.
+- **Joins.** With `advanced.database.joins: true`, Better Auth asks the adapter for related rows together with the main query. The adapter loads them with one `IN` query per joined table, whatever the number of rows, and applies the per-parent limit of one-to-many joins in SQL. Reading many rows with their relations then costs one query plus one per joined table, instead of one per row. Single-row lookups such as `getSession` stay at 2.
   - The join queries run one after another, so a join never takes extra connections from the pool.
 - **`consumeOne` and `incrementOne`** are a single `DELETE` or `UPDATE … RETURNING` on PostgreSQL and SQLite. On MySQL, see below.
 
@@ -264,7 +265,7 @@ Queries per call, as measured with this adapter:
   ```
 
 - **No `RETURNING`.** The adapter reads a written row back by its id. `update`, `consumeOne` and `incrementOne` first lock the matching rows with `SELECT … FOR UPDATE` inside a transaction, which becomes a savepoint inside yours.
-- **Case.** Case-sensitive comparisons (the default `mode`) bind the value with `COLLATE utf8mb4_bin`, so they distinguish case with any column collation and still use the column's index. `mode: 'insensitive'` compares with `LOWER()`. The connection needs the `utf8mb4` character set, which is mysql2's default.
+- **Case.** Case-sensitive comparisons (the default `mode`) bind the value with `COLLATE utf8mb4_0900_bin`, so they distinguish case with any column collation and still use the column's index. That collation doesn't pad, so `'abc'` and `'abc '` differ too. `mode: 'insensitive'` compares with `LOWER()`. The connection needs the `utf8mb4` character set, which is mysql2's default.
 - **Schema changes on a running app.** MySQL is worse than PostgreSQL here. After a table is recreated with different column types, cached prepared statements can silently read nothing. Restart the app after such migrations, or use `disablePreparedStatements: true`.
 - **Dates** are `datetime(3)`, which has no year-2038 limit.
 

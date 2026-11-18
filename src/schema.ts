@@ -1,7 +1,7 @@
 import type { BetterAuthOptions } from 'better-auth'
 import type { BetterAuthDBSchema, DBFieldAttribute, DBTableIndex } from 'better-auth/db'
-import { Array, Effect, identity, Match, Option, Order, Predicate, pipe, Record, String } from 'effect'
-import type { SqlClient } from 'effect/sql'
+import { Array, Effect, Equivalence, identity, Match, Option, Order, Predicate, pipe, Record, String } from 'effect'
+import { type SqlClient, Statement } from 'effect/sql'
 import type { Dialect } from './dialect'
 import { adapterError, type EffectSqlAdapterError } from './errors'
 
@@ -87,18 +87,30 @@ const timestampDefaults: Record<Dialect, Option.Option<string>> = {
   mysql: Option.some('DEFAULT CURRENT_TIMESTAMP(3)'),
 }
 
-const quote =
-  (dialect: Dialect) =>
-  (identifier: string): string => {
-    const char = quoteChars[dialect]
-    return `${char}${String.replaceAll(char, char + char)(identifier)}${char}`
-  }
+/**
+ * The clients' own escaping, so the DDL names what the queries name. It reads a dot as a qualifier:
+ * `auth.user` is table `user` in schema `auth`.
+ */
+const quoters: Record<Dialect, (identifier: string) => string> = Record.map(quoteChars, Statement.defaultEscape)
 
+const quote = (dialect: Dialect): ((identifier: string) => string) => quoters[dialect]
+
+const quotedParts: Record<Dialect, RegExp> = {
+  sqlite: /"((?:[^"]|"")*)"/g,
+  pg: /"((?:[^"]|"")*)"/g,
+  mysql: /`((?:[^`]|``)*)`/g,
+}
+
+/** The inverse of `quote`: every quoted part, unescaped, joined by dots again. */
 const unquote =
   (dialect: Dialect) =>
   (quoted: string): string => {
     const char = quoteChars[dialect]
-    return pipe(quoted, String.slice(1, -1), String.replaceAll(char + char, char))
+    return pipe(
+      Array.fromIterable(String.matchAll(quotedParts[dialect])(quoted)),
+      Array.map((match) => String.replaceAll(char + char, char)(match[1] ?? '')),
+      Array.join('.'),
+    )
   }
 
 /** Names as the client's queries render them. SqlClient doesn't expose `transformQueryNames`, hence the compile. */
@@ -106,6 +118,17 @@ export const clientNames =
   (sql: SqlClient.SqlClient, dialect: Dialect) =>
   (name: string): string =>
     unquote(dialect)(sql`${sql(name)}`.compile()[0])
+
+/** `auth.user` → `user`. */
+const bareName = (name: string): string => Array.lastNonEmpty(String.split(name, '.'))
+
+/** `auth.user` → `['auth']`, `user` → `[]`. */
+const schemaOf = (name: string): ReadonlyArray<string> => Array.dropRight(String.split(name, '.'), 1)
+
+/** `index` in the schema of `table`: `auth.user`, `i` → `auth.i`. */
+const inSchemaOf = (table: string, index: string): string => Array.join([...schemaOf(table), index], '.')
+
+const sameStrings = Array.makeEquivalence(Equivalence.String)
 
 const MAX_INDEX_NAME_BYTES = 63
 const INDEX_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -130,10 +153,10 @@ const stableHash = (value: string): string =>
     (hash) => String.padStart(8, '0')((hash >>> 0).toString(16)),
   )
 
-/** Same names as better-auth's own migrations. */
+/** Same names as better-auth's own migrations. An index lives in its table's schema, hence the bare name. */
 const generatedIndexName = (table: string, columns: ReadonlyArray<string>, unique: boolean): string => {
   const kind = unique ? 'uidx' : 'idx'
-  const name = `${table}_${Array.join(columns, '_')}_${kind}`
+  const name = `${bareName(table)}_${Array.join(columns, '_')}_${kind}`
   const suffix = `_${stableHash(name)}_${kind}`
   return utf8Length(name) <= MAX_INDEX_NAME_BYTES
     ? name
@@ -166,7 +189,8 @@ const resolveIndexColumn =
   (table: string, fields: Record<string, DBFieldAttribute>, unique: boolean) =>
   (fieldName: string): Effect.Effect<string, EffectSqlAdapterError> =>
     pipe(
-      Effect.fromNullishOr(fields[fieldName]),
+      // Own keys only: `fields.constructor` is `Object`.
+      Effect.fromOption(Record.get(fields, fieldName)),
       Effect.mapError(() => adapterError(`Index on table "${table}" references unknown field "${fieldName}".`)),
       Effect.filterOrFail(isIndexable, () =>
         adapterError(`Index on table "${table}" references field "${fieldName}", whose type is not indexable.`),
@@ -200,7 +224,7 @@ const resolveReference =
   (schema: BetterAuthDBSchema, rename: (name: string) => string) =>
   (field: DBFieldAttribute): Option.Option<ForeignKey> =>
     Option.map(Option.fromUndefinedOr(field.references), (reference) => {
-      const target = Option.fromUndefinedOr(schema[reference.model])
+      const target = Record.get(schema, reference.model)
       const toId = reference.field === 'id'
       return {
         table: pipe(
@@ -212,7 +236,7 @@ const resolveReference =
           ? rename('id')
           : pipe(
               target,
-              Option.flatMap((definition) => Option.fromUndefinedOr(definition.fields[reference.field])),
+              Option.flatMap((definition) => Record.get(definition.fields, reference.field)),
               Option.map((targetField) => columnName(reference.field, targetField)),
               Option.getOrElse(() => rename(reference.field)),
             ),
@@ -393,29 +417,55 @@ const columnDefinition = (
     ),
   )
 
-const foreignKeyDefinition = (dialect: Dialect, column: string, foreignKey: ForeignKey): string => {
+/** SQLite's REFERENCES takes a bare name, which it looks up in the referencing table's database. */
+const referencedTable: Record<
+  Dialect,
+  (table: string, foreignKey: ForeignKey) => Effect.Effect<string, EffectSqlAdapterError>
+> = {
+  sqlite: (table, foreignKey) =>
+    sameStrings(schemaOf(table), schemaOf(foreignKey.table))
+      ? Effect.succeed(bareName(foreignKey.table))
+      : Effect.fail(
+          adapterError(
+            `SQLite can't reference "${foreignKey.table}" from "${table}": a foreign key's tables must be in one database.`,
+          ),
+        ),
+  pg: (_, foreignKey) => Effect.succeed(foreignKey.table),
+  mysql: (_, foreignKey) => Effect.succeed(foreignKey.table),
+}
+
+const foreignKeyDefinition = (
+  dialect: Dialect,
+  table: string,
+  column: string,
+  foreignKey: ForeignKey,
+): Effect.Effect<string, EffectSqlAdapterError> => {
   const q = quote(dialect)
-  return `FOREIGN KEY (${q(column)}) REFERENCES ${q(foreignKey.table)} (${q(foreignKey.column)}) ON DELETE ${String.toUpperCase(foreignKey.onDelete)}`
+  return Effect.map(
+    referencedTable[dialect](table, foreignKey),
+    (target) =>
+      `FOREIGN KEY (${q(column)}) REFERENCES ${q(target)} (${q(foreignKey.column)}) ON DELETE ${String.toUpperCase(foreignKey.onDelete)}`,
+  )
 }
 
 const createTable = (config: SchemaConfig, table: Table): Effect.Effect<string, EffectSqlAdapterError> => {
   const q = quote(config.dialect)
   const id = (config.rename ?? identity)('id')
   const columns = Array.filter(table.columns, (column) => column.name !== id)
+  const references = Array.getSomes(
+    Array.map(columns, (column) =>
+      Option.map(column.references, (foreignKey) => ({ column: column.name, foreignKey })),
+    ),
+  )
   return Effect.map(
-    Effect.forEach(columns, (column) => columnDefinition(config, table, column)),
-    (definitions) => {
-      const lines = [
-        `${q(id)} ${idColumnTypes[config.dialect][config.idStrategy]}`,
-        ...definitions,
-        ...Array.getSomes(
-          Array.map(columns, (column) =>
-            Option.map(column.references, (foreignKey) =>
-              foreignKeyDefinition(config.dialect, column.name, foreignKey),
-            ),
-          ),
-        ),
-      ]
+    Effect.all([
+      Effect.forEach(columns, (column) => columnDefinition(config, table, column)),
+      Effect.forEach(references, ({ column, foreignKey }) =>
+        foreignKeyDefinition(config.dialect, table.name, column, foreignKey),
+      ),
+    ]),
+    ([definitions, foreignKeys]) => {
+      const lines = [`${q(id)} ${idColumnTypes[config.dialect][config.idStrategy]}`, ...definitions, ...foreignKeys]
       return `CREATE TABLE ${q(table.name)} (\n  ${Array.join(lines, ',\n  ')}\n)`
     },
   )
@@ -428,9 +478,41 @@ const fieldIndexes = (table: Table): ReadonlyArray<Index> =>
     Array.map(({ name }) => ({ name: generatedIndexName(table.name, [name], false), columns: [name], unique: false })),
   )
 
+/** better-auth compares index names case-insensitively: SQLite and MySQL fold their case. */
+const sameIndexName = (a: Index, b: Index): boolean => String.toLowerCase(a.name) === String.toLowerCase(b.name)
+
+const sameDefinition = (a: Index, b: Index): boolean => a.unique === b.unique && sameStrings(a.columns, b.columns)
+
+/** As in better-auth: one name with one definition is one index, e.g. declared by a plugin and by the app. */
+const distinctIndexes = (
+  table: Table,
+  indexes: ReadonlyArray<Index>,
+): Effect.Effect<ReadonlyArray<Index>, EffectSqlAdapterError> =>
+  pipe(
+    Array.findFirst(indexes, (index) =>
+      Array.some(indexes, (other) => sameIndexName(index, other) && !sameDefinition(index, other)),
+    ),
+    Option.match({
+      onNone: () => Effect.succeed(Array.dedupeWith(indexes, sameIndexName)),
+      onSome: ({ name }) =>
+        Effect.fail(adapterError(`Index name "${name}" identifies more than one index on table "${table.name}".`)),
+    }),
+  )
+
+/** PostgreSQL and MySQL create an index in its table's schema; SQLite takes the schema on the index name. */
+const indexPlacement: Record<
+  Dialect,
+  (table: string, index: string) => { readonly index: string; readonly on: string }
+> = {
+  sqlite: (table, index) => ({ index: inSchemaOf(table, index), on: bareName(table) }),
+  pg: (table, index) => ({ index, on: table }),
+  mysql: (table, index) => ({ index, on: table }),
+}
+
 const createIndex = (dialect: Dialect, table: string, index: Index): string => {
   const q = quote(dialect)
-  return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX ${q(index.name)} ON ${q(table)} (${Array.join(Array.map(index.columns, q), ', ')})`
+  const placed = indexPlacement[dialect](table, index.name)
+  return `CREATE ${index.unique ? 'UNIQUE ' : ''}INDEX ${q(placed.index)} ON ${q(placed.on)} (${Array.join(Array.map(index.columns, q), ', ')})`
 }
 
 export const schemaStatements = (
@@ -441,10 +523,13 @@ export const schemaStatements = (
     const rename = config.rename ?? identity
     const tables = sortByDependencies(yield* buildTables(renameSchema(schema, rename), rename))
     const createTables = yield* Effect.forEach(tables, (table) => createTable(config, table))
-    const createIndexes = Array.flatMap(tables, (table) =>
-      Array.map([...fieldIndexes(table), ...table.indexes], (index) => createIndex(config.dialect, table.name, index)),
+    const createIndexes = yield* Effect.forEach(tables, (table) =>
+      Effect.map(
+        distinctIndexes(table, [...fieldIndexes(table), ...table.indexes]),
+        Array.map((index) => createIndex(config.dialect, table.name, index)),
+      ),
     )
-    return [...createTables, ...createIndexes]
+    return [...createTables, ...Array.flatten(createIndexes)]
   })
 
 export const renderSchema = (statements: ReadonlyArray<string>): string =>

@@ -3,7 +3,8 @@
  * the app-transaction bridge relies on Bun's AsyncLocalStorage. Fails the process on any check.
  */
 import { SqliteClient } from '@effect/sql-sqlite-bun'
-import { Array, Data, Effect, Layer, String } from 'effect'
+import type { BetterAuthOptions } from 'better-auth'
+import { Array, Data, DateTime, Effect, Layer, String } from 'effect'
 import { SqlClient } from 'effect/sql'
 import { AuthCallError, EffectSqlAdapter } from '../src/index'
 import { Auth, authOptions, signUpBody } from './auth'
@@ -12,11 +13,14 @@ class SmokeFailure extends Data.TaggedError('SmokeFailure')<{ readonly check: st
 
 const check = (name: string, passed: boolean) => (passed ? Effect.void : Effect.fail(new SmokeFailure({ check: name })))
 
+/** With the rate limit table, which `incrementOne` writes to. */
+const schemaOptions: BetterAuthOptions = { ...authOptions, rateLimit: { enabled: true, storage: 'database' } }
+
 const createSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient
-  const adapter = (yield* EffectSqlAdapter.make())(authOptions)
+  const adapter = (yield* EffectSqlAdapter.make())(schemaOptions)
   const schema = yield* Effect.promise(
-    () => adapter.createSchema?.(authOptions, undefined) ?? Promise.resolve(undefined),
+    () => adapter.createSchema?.(schemaOptions, undefined) ?? Promise.resolve(undefined),
   )
   const statements = Array.filter(String.split(schema?.code ?? '', ';'), (statement) =>
     String.isNonEmpty(String.trim(statement)),
@@ -37,8 +41,52 @@ const inAppTransaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
     ),
   )
 
+/** Every adapter method once: a driver may shape its results unlike `node:sqlite`'s. */
+const adapterMethods = Effect.gen(function* () {
+  const adapter = (yield* EffectSqlAdapter.make())(schemaOptions)
+  const expiresAt = DateTime.toDateUtc(DateTime.add(yield* DateTime.now, { minutes: 1 }))
+  const otp = [{ field: 'identifier', value: 'otp' }]
+  yield* Effect.forEach(
+    ['1', '2', '3'],
+    (value) =>
+      Effect.promise(() => adapter.create({ model: 'verification', data: { identifier: 'otp', value, expiresAt } })),
+    { discard: true },
+  )
+  const found = yield* Effect.promise(() => adapter.findOne<{ value: string }>({ model: 'verification', where: otp }))
+  yield* check('findOne', found !== null)
+  yield* check('findMany', (yield* Effect.promise(() => adapter.findMany({ model: 'verification' }))).length === 3)
+  yield* check('count', (yield* Effect.promise(() => adapter.count({ model: 'verification', where: otp }))) === 3)
+  const updated = yield* Effect.promise(() =>
+    adapter.update<{ value: string }>({ model: 'verification', where: otp, update: { value: '0' } }),
+  )
+  yield* check('update', updated?.value === '0')
+  const updatedMany = yield* Effect.promise(() =>
+    adapter.updateMany({ model: 'verification', where: otp, update: { value: 'x' } }),
+  )
+  yield* check('updateMany counts the rows it wrote', updatedMany === 3)
+  const consumed = yield* Effect.promise(() => adapter.consumeOne({ model: 'verification', where: otp }))
+  yield* check('consumeOne', consumed !== null)
+  const left = yield* Effect.flatMap(
+    Effect.promise(() => adapter.findOne<{ id: string }>({ model: 'verification', where: otp })),
+    (row) => Effect.mapError(Effect.fromNullishOr(row), () => new SmokeFailure({ check: 'findOne after consumeOne' })),
+  )
+  yield* Effect.promise(() => adapter.delete({ model: 'verification', where: [{ field: 'id', value: left.id }] }))
+  const deletedMany = yield* Effect.promise(() => adapter.deleteMany({ model: 'verification', where: [] }))
+  yield* check('deleteMany counts the rows it deleted', deletedMany === 1)
+  yield* Effect.promise(() => adapter.create({ model: 'rateLimit', data: { key: 'ip', count: 1, lastRequest: 1 } }))
+  const bumped = yield* Effect.promise(() =>
+    adapter.incrementOne<{ count: number }>({
+      model: 'rateLimit',
+      where: [{ field: 'key', value: 'ip' }],
+      increment: { count: 1 },
+    }),
+  )
+  yield* check('incrementOne', bumped?.count === 2)
+})
+
 const smoke = Effect.gen(function* () {
   yield* createSchema
+  yield* adapterMethods
   const auth = EffectSqlAdapter.bind(yield* Auth)
 
   const committed = yield* inAppTransaction(
