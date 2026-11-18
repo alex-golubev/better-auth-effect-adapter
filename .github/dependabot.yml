@@ -4,6 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # pnpm's minimumReleaseAge rejects releases younger than a day, so a fresher bump would fail CI.
+    cooldown:
+      default-days: 1
     groups:
       effect:
         patterns: ["effect", "@effect/*"]
