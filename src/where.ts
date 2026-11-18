@@ -38,8 +38,11 @@ const loweredList = (sql: SqlClient.SqlClient, values: Array.NonEmptyReadonlyArr
   // `sql.join` parenthesizes only 2+ items, and `IN LOWER(?)` parses as a table.
   sql`(${sql.join(', ', false)(Array.map(values, (value) => sql`LOWER(${value})`))})`
 
-/** MySQL's default collations ignore case. The collation goes on the value: it is utf8mb4, the column may not be. */
-const binary = (sql: SqlClient.SqlClient, value: unknown): Fragment => sql`(${value} COLLATE utf8mb4_bin)`
+/**
+ * MySQL's default collations ignore case. The collation goes on the value: it is utf8mb4, the column may not be.
+ * NO PAD, unlike `utf8mb4_bin`, under which `'abc'` equals `'abc '`.
+ */
+const binary = (sql: SqlClient.SqlClient, value: unknown): Fragment => sql`(${value} COLLATE utf8mb4_0900_bin)`
 
 const binaryList = (sql: SqlClient.SqlClient, values: Array.NonEmptyReadonlyArray<unknown>): Fragment =>
   sql`(${sql.join(', ', false)(Array.map(values, (value) => binary(sql, value)))})`
@@ -150,6 +153,8 @@ interface InList {
   readonly values: (condition: Condition, values: Array.NonEmptyReadonlyArray<unknown>) => Fragment
 }
 
+const nonNull = (values: ReadonlyArray<unknown>): ReadonlyArray<unknown> => Array.filter(values, Predicate.isNotNull)
+
 /** `IN` never matches NULL, and a NULL inside `NOT IN` makes it match nothing: nulls get their own clause. */
 const inList =
   ({ empty, nullCheck, connector, values }: InList) =>
@@ -159,7 +164,7 @@ const inList =
     const nulls = Option.liftPredicate(sql`${column} ${sql.literal(nullCheck)}`, () =>
       Array.some(all, Predicate.isNull),
     )
-    return Array.match(Array.filter(all, Predicate.isNotNull), {
+    return Array.match(nonNull(all), {
       onEmpty: () => Option.getOrElse(nulls, () => sql.literal(empty)),
       onNonEmpty: (present) =>
         Option.match(nulls, {
@@ -199,11 +204,11 @@ const operators: Record<WhereOperator, (condition: Condition) => Fragment> = {
   ends_with: patternMatch({ before: true, after: false }),
 }
 
-/** `LOWER()` applies to strings only. */
+/** `LOWER()` applies to strings only. List nulls don't count: `inList` gives them an `IS NULL` clause. */
 const isInsensitive = ({ mode, value }: CleanedWhere): boolean =>
   mode === 'insensitive' &&
   (Predicate.isString(value) ||
-    (Array.isArray(value) && Array.every(value as ReadonlyArray<unknown>, Predicate.isString)))
+    (Array.isArray(value) && Array.every(nonNull(value as ReadonlyArray<unknown>), Predicate.isString)))
 
 const toFragment =
   (sql: SqlClient.SqlClient, dialect: Dialect) =>

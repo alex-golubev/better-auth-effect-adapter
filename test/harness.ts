@@ -82,6 +82,8 @@ export interface DatabaseOptions {
    * outlive the table (PostgreSQL errors, MySQL 8.4 silently reads nothing).
    */
   readonly preparedStatements?: boolean
+  /** MySQL only: the test user may not create databases. */
+  readonly root?: boolean
 }
 
 export const postgresDatabase = ({ maxConnections, preparedStatements = true }: DatabaseOptions = {}): Database =>
@@ -100,13 +102,17 @@ export const postgresDatabase = ({ maxConnections, preparedStatements = true }: 
 /** mysql2 uses local time for `Date` by default; `MysqlClient` ignores `poolConfig` next to a `url`. */
 const utcMysqlUrl = (uri: string): string => `${uri}${new URL(uri).search === '' ? '?' : '&'}timezone=Z`
 
-export const mysqlDatabase = ({ maxConnections, preparedStatements = true }: DatabaseOptions = {}): Database =>
+export const mysqlDatabase = ({
+  maxConnections,
+  preparedStatements = true,
+  root = false,
+}: DatabaseOptions = {}): Database =>
   Layer.unwrap(
     Effect.map(
       container(() => new MySqlContainer('mysql:8.4').start()),
       (started) =>
         MysqlClient.layer({
-          url: Redacted.make(utcMysqlUrl(started.getConnectionUri())),
+          url: Redacted.make(utcMysqlUrl(started.getConnectionUri(root))),
           disablePreparedStatements: !preparedStatements,
           maxConnections,
         }),
