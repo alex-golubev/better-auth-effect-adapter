@@ -2,7 +2,7 @@
 
 ## Setup
 
-You need Node.js 22 or later, pnpm 10 (`corepack enable`), and Docker for the integration tests.
+You need Node.js 22 or later, pnpm 12 (`corepack enable`), and Docker for the integration tests.
 
 ```bash
 pnpm install   # also patches TypeScript with @effect/tsgo (the `prepare` script)

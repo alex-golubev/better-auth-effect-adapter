@@ -36,7 +36,7 @@
   "engines": {
     "node": ">=22"
   },
-  "packageManager": "pnpm@10.29.1",
+  "packageManager": "pnpm@12.21.0",
   "keywords": [
     "better-auth",
     "effect",
