@@ -55,8 +55,8 @@
     "url": "https://github.com/alex-golubev/better-auth-effect-adapter/issues"
   },
   "devDependencies": {
-    "@better-auth/core": "1.7.25",
-    "@better-auth/test-utils": "1.7.25",
+    "@better-auth/core": "1.7.26",
+    "@better-auth/test-utils": "1.7.26",
     "@biomejs/biome": "2.6.8",
     "@effect/sql-mysql2": "4.1.4",
     "@effect/sql-pg": "4.1.4",
@@ -67,7 +67,7 @@
     "@testcontainers/mysql": "12.2.1",
     "@testcontainers/postgresql": "12.2.1",
     "@types/node": "26.6.6",
-    "better-auth": "1.7.25",
+    "better-auth": "1.7.26",
     "effect": "4.1.4",
     "tsdown": "0.23.7",
     "typescript": "7.0.2",
