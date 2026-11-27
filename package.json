@@ -57,20 +57,20 @@
   "devDependencies": {
     "@better-auth/core": "1.7.26",
     "@better-auth/test-utils": "1.7.26",
-    "@biomejs/biome": "2.6.8",
+    "@biomejs/biome": "2.6.9",
     "@effect/sql-mysql2": "4.1.4",
     "@effect/sql-pg": "4.1.4",
     "@effect/sql-sqlite-bun": "4.1.4",
     "@effect/sql-sqlite-node": "4.1.4",
     "@effect/tsgo": "0.70.0",
     "@effect/vitest": "4.1.4",
-    "@testcontainers/mysql": "12.2.1",
-    "@testcontainers/postgresql": "12.2.1",
-    "@types/node": "26.6.6",
+    "@testcontainers/mysql": "12.2.2",
+    "@testcontainers/postgresql": "12.2.2",
+    "@types/node": "26.6.11",
     "better-auth": "1.7.26",
     "effect": "4.1.4",
     "tsdown": "0.23.7",
     "typescript": "7.0.2",
-    "vitest": "5.1.1"
+    "vitest": "5.1.2"
   }
 }
